@@ -15,8 +15,8 @@ from pydantic import BaseModel
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "translator_config.json")
 
 DEFAULTS = {
-    "base_url":        "http://192.168.200.92:30286/v1",
-    "model":           "yanolja_yanoljanext-rosetta-12b-2510",
+    "base_url":        "http://192.168.200.133:11434/v1",
+    "model":           "gemma4:e4b",
     "max_tokens":      2048,
     "llm_timeout":     180,
     "chunk_size":      3000,
@@ -26,6 +26,43 @@ DEFAULTS = {
 
 HOST = "0.0.0.0"
 PORT = 7860
+
+LANG_NAMES_UK = {
+    "Arabic":     "Арабська",
+    "Bulgarian":  "Болгарська",
+    "Chinese":    "Китайська",
+    "Czech":      "Чеська",
+    "Danish":     "Данська",
+    "Dutch":      "Нідерландська",
+    "English":    "Англійська",
+    "Esperanto":  "Есперанто",
+    "Finnish":    "Фінська",
+    "French":     "Французька",
+    "German":     "Німецька",
+    "Greek":      "Грецька",
+    "Gujarati":   "Гуджараті",
+    "Hebrew":     "Іврит",
+    "Hindi":      "Гінді",
+    "Hungarian":  "Угорська",
+    "Indonesian": "Індонезійська",
+    "Italian":    "Італійська",
+    "Japanese":   "Японська",
+    "Korean":     "Корейська",
+    "Latin":      "Латинська",
+    "Persian":    "Перська",
+    "Polish":     "Польська",
+    "Portuguese": "Португальська",
+    "Romanian":   "Румунська",
+    "Russian":    "Російська",
+    "Slovak":     "Словацька",
+    "Spanish":    "Іспанська",
+    "Swedish":    "Шведська",
+    "Tagalog":    "Тагальська",
+    "Thai":       "Тайська",
+    "Turkish":    "Турецька",
+    "Ukrainian":  "Українська",
+    "Vietnamese": "В'єтнамська",
+}
 
 LANG_MAP = {
     "Arabic":     "ar",
@@ -581,9 +618,9 @@ async function initSelects() {
   const from = document.getElementById('lang_from');
   const to   = document.getElementById('lang_to');
   from.appendChild(new Option('Автовизначення', 'auto'));
-  langs.forEach(l => {
-    from.appendChild(new Option(l, l));
-    to.appendChild(new Option(l, l));
+  langs.forEach(({ label, value }) => {
+    from.appendChild(new Option(label, value));
+    to.appendChild(new Option(label, value));
   });
   to.value = 'Ukrainian';
 }
@@ -613,7 +650,8 @@ def index():
 
 @app.get("/languages")
 def get_languages():
-    return JSONResponse(sorted(LANG_MAP.keys()))
+    langs = sorted(LANG_MAP.keys(), key=lambda k: LANG_NAMES_UK[k])
+    return JSONResponse([{"label": LANG_NAMES_UK[k], "value": k} for k in langs])
 
 
 @app.get("/config")
