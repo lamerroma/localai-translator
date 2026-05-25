@@ -754,8 +754,6 @@ def translate(req: TranslateRequest):
 
             while not ollama_acquired:
                 if stop_event.is_set():
-                    with _qs_mutex:
-                        _queue_size -= 1
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return
                 with _qs_mutex:
@@ -763,9 +761,6 @@ def translate(req: TranslateRequest):
                 if ahead > 0:
                     yield f"data: {json.dumps({'type': 'queue', 'ahead': ahead})}\n\n"
                 ollama_acquired = _ollama_lock.acquire(timeout=2)
-
-            with _qs_mutex:
-                _queue_size -= 1
 
             yield f"data: {json.dumps({'type': 'queue', 'ahead': 0})}\n\n"
             yield log(f"[{ts()}] Sending request (streaming)...")
@@ -829,6 +824,8 @@ def translate(req: TranslateRequest):
         finally:
             if ollama_acquired:
                 _ollama_lock.release()
+            with _qs_mutex:
+                _queue_size -= 1
             _active.pop(request_id, None)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
