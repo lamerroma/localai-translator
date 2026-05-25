@@ -789,7 +789,7 @@ def translate(req: TranslateRequest):
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return
                 with _ticket_lock:
-                    ahead = my_ticket - _ticket_serving - 1
+                    ahead = my_ticket - _ticket_serving
                 if ahead > 0:
                     yield f"data: {json.dumps({'type': 'queue', 'ahead': ahead})}\n\n"
 
