@@ -129,7 +129,7 @@ _active: dict[str, threading.Event] = {}
 _results: dict[str, tuple[str, bytes]] = {}
 
 _ollama_lock = threading.Lock()
-_queue_size = 0
+_queue = {"size": 0}
 _qs_mutex = threading.Lock()
 
 
@@ -721,12 +721,11 @@ def stop_translation(request_id: str):
 
 @app.post("/translate")
 def translate(req: TranslateRequest):
-    global _queue_size
     request_id = str(uuid.uuid4())
     stop_event = threading.Event()
     _active[request_id] = stop_event
     with _qs_mutex:
-        _queue_size += 1
+        _queue["size"] += 1
 
     def generate():
         def log(msg: str):
@@ -769,7 +768,7 @@ def translate(req: TranslateRequest):
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return
                 with _qs_mutex:
-                    ahead = _queue_size - 1
+                    ahead = _queue["size"] - 1
                 if ahead > 0:
                     yield f"data: {json.dumps({'type': 'queue', 'ahead': ahead})}\n\n"
                 ollama_acquired = _ollama_lock.acquire(timeout=2)
@@ -837,7 +836,7 @@ def translate(req: TranslateRequest):
             if ollama_acquired:
                 _ollama_lock.release()
             with _qs_mutex:
-                _queue_size -= 1
+                _queue["size"] -= 1
             _active.pop(request_id, None)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
