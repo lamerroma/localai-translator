@@ -128,6 +128,10 @@ app = FastAPI()
 _active: dict[str, threading.Event] = {}
 _results: dict[str, tuple[str, bytes]] = {}
 
+_ollama_lock = threading.Lock()
+_queue_size = 0
+_qs_mutex = threading.Lock()
+
 
 def extract_text(filename: str, content: bytes) -> str:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
@@ -495,6 +499,14 @@ async function doTranslate() {
         if (!line.startsWith('data: ')) continue;
         let evt; try { evt = JSON.parse(line.slice(6)); } catch { continue; }
         if (evt.type === 'id') { _requestId = evt.text; }
+        else if (evt.type === 'queue') {
+          if (evt.ahead > 0) {
+            status.textContent = `⏳ В черзі: ${evt.ahead} запит${evt.ahead > 1 ? 'и' : ''} попереду...`;
+            status.className = 'status';
+          } else {
+            status.textContent = 'Перекладаю...';
+          }
+        }
         else if (evt.type === 'log') { log.textContent += evt.text + '\n'; log.scrollTop = log.scrollHeight; }
         else if (evt.type === 'token') { result.value += evt.text; }
         else if (evt.type === 'result') {
@@ -707,6 +719,9 @@ def translate(req: TranslateRequest):
         def ts():
             return datetime.datetime.now().strftime("%H:%M:%S")
 
+        global _queue_size
+        ollama_acquired = False
+
         try:
             yield f"data: {json.dumps({'type': 'id', 'text': request_id})}\n\n"
 
@@ -734,6 +749,25 @@ def translate(req: TranslateRequest):
                 {"role": "user", "content": prompt},
             ]
 
+            with _qs_mutex:
+                _queue_size += 1
+
+            while not ollama_acquired:
+                if stop_event.is_set():
+                    with _qs_mutex:
+                        _queue_size -= 1
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return
+                with _qs_mutex:
+                    ahead = _queue_size - 1
+                if ahead > 0:
+                    yield f"data: {json.dumps({'type': 'queue', 'ahead': ahead})}\n\n"
+                ollama_acquired = _ollama_lock.acquire(timeout=2)
+
+            with _qs_mutex:
+                _queue_size -= 1
+
+            yield f"data: {json.dumps({'type': 'queue', 'ahead': 0})}\n\n"
             yield log(f"[{ts()}] Sending request (streaming)...")
 
             try:
@@ -793,6 +827,8 @@ def translate(req: TranslateRequest):
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         finally:
+            if ollama_acquired:
+                _ollama_lock.release()
             _active.pop(request_id, None)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
