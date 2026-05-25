@@ -304,7 +304,7 @@ HTML = r"""<!DOCTYPE html>
   <div style="margin-bottom:12px; margin-top:8px;">
     <textarea id="input" rows="6" placeholder="Введіть текст тут..."></textarea>
   </div>
-  <div id="queue-banner" style="display:none; background:#fff7ed; border:1px solid #fb923c; border-radius:8px; padding:12px 16px; margin-bottom:12px; display:none; align-items:center; gap:10px;">
+  <div id="queue-banner" style="display:none; background:#fff7ed; border:1px solid #fb923c; border-radius:8px; padding:12px 16px; margin-bottom:12px; gap:10px;">
     <span style="font-size:1.3rem;">⏳</span>
     <div>
       <strong style="color:#9a3412;">Запит у черзі</strong>
@@ -513,7 +513,7 @@ async function doTranslate() {
           const bannerText = document.getElementById('queue-banner-text');
           if (evt.ahead > 0) {
             bannerText.textContent = ` — попереду ${evt.ahead} запит${evt.ahead > 1 ? 'и' : ''}. Очікуйте...`;
-            banner.style.display = 'flex';
+            banner.style.cssText = 'display:flex; align-items:center; gap:10px; background:#fff7ed; border:1px solid #fb923c; border-radius:8px; padding:12px 16px; margin-bottom:12px;';
             status.textContent = '';
           } else {
             banner.style.display = 'none';
