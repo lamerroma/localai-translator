@@ -4,6 +4,7 @@ import os
 import datetime
 import uuid
 import threading
+import queue as _queue_mod
 from urllib.parse import quote
 import requests as req_lib
 from fastapi import FastAPI, UploadFile, File, Form
@@ -128,9 +129,23 @@ app = FastAPI()
 _active: dict[str, threading.Event] = {}
 _results: dict[str, tuple[str, bytes]] = {}
 
-_ollama_lock = threading.Lock()
-_queue = {"size": 0}
-_qs_mutex = threading.Lock()
+_job_queue: _queue_mod.Queue = _queue_mod.Queue()
+_ticket_lock = threading.Lock()
+_ticket_issued = 0
+_ticket_serving = 0
+
+
+def _queue_worker():
+    global _ticket_serving
+    while True:
+        start_evt, done_evt = _job_queue.get()
+        with _ticket_lock:
+            _ticket_serving += 1
+        start_evt.set()
+        done_evt.wait()
+
+
+threading.Thread(target=_queue_worker, daemon=True).start()
 
 
 def extract_text(filename: str, content: bytes) -> str:
@@ -721,11 +736,17 @@ def stop_translation(request_id: str):
 
 @app.post("/translate")
 def translate(req: TranslateRequest):
+    global _ticket_issued
     request_id = str(uuid.uuid4())
     stop_event = threading.Event()
     _active[request_id] = stop_event
-    with _qs_mutex:
-        _queue["size"] += 1
+
+    start_evt = threading.Event()
+    done_evt = threading.Event()
+    with _ticket_lock:
+        _ticket_issued += 1
+        my_ticket = _ticket_issued
+    _job_queue.put((start_evt, done_evt))
 
     def generate():
         def log(msg: str):
@@ -734,10 +755,20 @@ def translate(req: TranslateRequest):
         def ts():
             return datetime.datetime.now().strftime("%H:%M:%S")
 
-        ollama_acquired = False
-
         try:
             yield f"data: {json.dumps({'type': 'id', 'text': request_id})}\n\n"
+
+            # Wait in queue until our turn
+            while not start_evt.wait(timeout=2):
+                if stop_event.is_set():
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return
+                with _ticket_lock:
+                    ahead = my_ticket - _ticket_serving - 1
+                if ahead > 0:
+                    yield f"data: {json.dumps({'type': 'queue', 'ahead': ahead})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'queue', 'ahead': 0})}\n\n"
 
             lang_to_code = LANG_MAP.get(req.lang_to, req.lang_to)
             lang_from_code = LANG_MAP.get(req.lang_from)
@@ -763,17 +794,6 @@ def translate(req: TranslateRequest):
                 {"role": "user", "content": prompt},
             ]
 
-            while not ollama_acquired:
-                if stop_event.is_set():
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return
-                with _qs_mutex:
-                    ahead = _queue["size"] - 1
-                if ahead > 0:
-                    yield f"data: {json.dumps({'type': 'queue', 'ahead': ahead})}\n\n"
-                ollama_acquired = _ollama_lock.acquire(timeout=2)
-
-            yield f"data: {json.dumps({'type': 'queue', 'ahead': 0})}\n\n"
             yield log(f"[{ts()}] Sending request (streaming)...")
 
             try:
@@ -833,10 +853,7 @@ def translate(req: TranslateRequest):
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         finally:
-            if ollama_acquired:
-                _ollama_lock.release()
-            with _qs_mutex:
-                _queue["size"] -= 1
+            done_evt.set()
             _active.pop(request_id, None)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
