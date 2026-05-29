@@ -18,7 +18,28 @@ from docx import Document
 from docx.shared import Pt
 import customtkinter as ctk
 
-VERSION = "3.9.0"
+VERSION = "3.10.0"
+AUTHOR = "Роман Гавриш (Coyotl)"
+
+ABOUT_TEXT = """\
+Перекладач АПІ — локальний інструмент для перекладу \
+документів і тексту за допомогою AI-моделей через сервер Ollama.
+
+Усі переклади виконуються локально — дані не передаються \
+до хмарних сервісів, що забезпечує повну конфіденційність.
+
+Можливості:
+  •  Переклад DOCX-документів зі збереженням форматування
+  •  Швидкий переклад довільного тексту в окремому вікні
+  •  Підтримка 150+ мов (залежно від обраної моделі)
+  •  Гнучке налаштування адреси сервера Ollama
+
+Як працює:
+Програма підключається до локального сервера Ollama та надсилає \
+текст обраній мовній моделі. Документи обробляються на рівні \
+окремих текстових фрагментів (runs) зі збереженням оригінального \
+форматування Word.\
+"""
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 
 POPULAR_LANGUAGES = [
@@ -211,6 +232,55 @@ class AllLanguagesDialog(ctk.CTkToplevel):
     def _pick(self, lang):
         self.on_select(lang)
         self.destroy()
+
+
+# ── About Dialog ─────────────────────────────────────────────────────────────
+
+class AboutDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Про програму")
+        self.geometry("480x420")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+        self.focus_force()
+
+        # Title
+        ctk.CTkLabel(
+            self, text="Перекладач АПІ",
+            font=ctk.CTkFont(size=20, weight="bold"),
+        ).pack(pady=(20, 2))
+        ctk.CTkLabel(
+            self, text=f"Версія {VERSION}",
+            font=ctk.CTkFont(size=12), text_color="gray",
+        ).pack(pady=(0, 4))
+
+        ctk.CTkFrame(self, height=1, fg_color=("gray75", "gray30")).pack(fill="x", padx=20, pady=(4, 12))
+
+        # Description
+        box = ctk.CTkTextbox(
+            self, font=ctk.CTkFont(size=13), wrap="word",
+            fg_color=("gray88", "gray17"), corner_radius=8,
+            height=240, state="normal",
+        )
+        box.pack(fill="x", padx=20, pady=(0, 12))
+        box.insert("1.0", ABOUT_TEXT)
+        box.configure(state="disabled")
+
+        ctk.CTkFrame(self, height=1, fg_color=("gray75", "gray30")).pack(fill="x", padx=20, pady=(0, 10))
+
+        # Author + close
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(fill="x", padx=20, pady=(0, 16))
+        ctk.CTkLabel(
+            footer, text=f"Автор: {AUTHOR}",
+            font=ctk.CTkFont(size=12), text_color="gray", anchor="w",
+        ).pack(side="left")
+        ctk.CTkButton(
+            footer, text="Закрити", width=90,
+            command=self.destroy,
+        ).pack(side="right")
 
 
 # ── Quick Translate Window ───────────────────────────────────────────────────
@@ -451,7 +521,14 @@ class App(ctk.CTk):
             theme_frame, text="⚡ Швидкий переклад", width=150, height=30,
             font=ctk.CTkFont(size=12),
             command=self._open_quick_translate,
-        ).pack(side="left", padx=(0, 12))
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            theme_frame, text="ℹ", width=30, height=30,
+            font=ctk.CTkFont(size=14),
+            fg_color="transparent", hover_color=("gray80", "gray25"),
+            text_color=("gray40", "gray65"),
+            command=self._open_about,
+        ).pack(side="left", padx=(0, 10))
         ctk.CTkLabel(theme_frame, text="☀", font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 2))
         self._theme_switch = ctk.CTkSwitch(
             theme_frame, text="", width=44, command=self._toggle_theme,
@@ -596,6 +673,11 @@ class App(ctk.CTk):
     def _toggle_theme(self):
         self._theme = "dark" if self._theme_switch.get() else "light"
         ctk.set_appearance_mode(self._theme)
+
+    # ── About ─────────────────────────────────────────────────────────────────
+
+    def _open_about(self):
+        AboutDialog(self)
 
     # ── Quick Translate ───────────────────────────────────────────────────────
 
