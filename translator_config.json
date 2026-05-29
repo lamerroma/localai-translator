@@ -1,6 +1,6 @@
 {
   "base_url": "http://192.168.200.92:30286/v1",
-  "model": "yanolja_yanoljanext-rosetta-12b-2510",
+  "model": "translategemma:4b",
   "max_tokens": 2048,
   "llm_timeout": 180,
   "chunk_size": 3000,

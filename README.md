@@ -30,7 +30,7 @@
 |-------------|--------|
 | Сервер      | FastAPI + Uvicorn |
 | LLM бекенд  | LocalAI (OpenAI-сумісний API) |
-| Модель      | Yanolja Rosetta 12B-2510 (основна) |
+| Модель      | TranslateGemma 4B |
 | Адреса LLM  | `http://192.168.200.92:30286/v1` |
 | Порт сервера | `7860` |
 
