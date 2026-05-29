@@ -1,9 +1,9 @@
 {
   "base_url": "http://localhost:11434/v1",
   "model": "translategemma:4b",
-  "max_tokens": 2048,
+  "max_tokens": 4096,
   "llm_timeout": 180,
-  "chunk_size": 3000,
+  "chunk_size": 6000,
   "system_msg": "Ти — професійний перекладач. Перекладай текст точно, зберігаючи оригінальний сенс, часи дієслів та числівники. Уникай зайвої поетизації та художніх вигадок, якщо це змінює фактичні дані (наприклад, дати або цифри).\"",
   "prompt_template": "{text}\n\n§ Translate the text above {direction}. This is a {context}. Keep all ⟨P⟩ and ⟨N⟩ markers exactly in place — they mark paragraph and line breaks. Preserve technical terms, proper nouns, and numbers exactly. Do not add notes or commentary. Output ONLY the translation. §"
 }

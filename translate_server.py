@@ -17,9 +17,9 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "translator_config.json")
 DEFAULTS = {
     "base_url":        "http://localhost:11434/v1",
     "model":           "yanolja_yanoljanext-rosetta-12b-2510",
-    "max_tokens":      2048,
+    "max_tokens":      4096,
     "llm_timeout":     180,
-    "chunk_size":      3000,
+    "chunk_size":      6000,
     "system_msg":      "You are a professional translator. Translate accurately and naturally, preserving the original tone and style.",
     "prompt_template": "{text}\n\n§ Translate the text above {direction}. This is a {context}. Keep all ⟨P⟩ and ⟨N⟩ markers exactly in place — they mark paragraph and line breaks. Preserve technical terms, proper nouns, and numbers exactly. Do not add notes or commentary. Output ONLY the translation. §",
 }
