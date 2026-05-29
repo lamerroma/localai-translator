@@ -15,7 +15,7 @@ from pydantic import BaseModel
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "translator_config.json")
 
 DEFAULTS = {
-    "base_url":        "http://192.168.200.92:30286/v1",
+    "base_url":        "http://localhost:11434/v1",
     "model":           "yanolja_yanoljanext-rosetta-12b-2510",
     "max_tokens":      2048,
     "llm_timeout":     180,

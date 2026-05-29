@@ -29,9 +29,9 @@
 | Компонент   | Деталі |
 |-------------|--------|
 | Сервер      | FastAPI + Uvicorn |
-| LLM бекенд  | LocalAI (OpenAI-сумісний API) |
+| LLM бекенд  | Ollama (OpenAI-сумісний API) |
 | Модель      | TranslateGemma 4B |
-| Адреса LLM  | `http://192.168.200.92:30286/v1` |
+| Адреса LLM  | `http://localhost:11434/v1` |
 | Порт сервера | `7860` |
 
 ---
@@ -40,6 +40,7 @@
 
 ```bash
 pip install fastapi uvicorn requests pypdf python-docx
+ollama pull translategemma:4b
 python translate_server.py
 ```
 
