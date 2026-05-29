@@ -18,7 +18,7 @@ from docx import Document
 from docx.shared import Pt
 import customtkinter as ctk
 
-VERSION = "3.6.0"
+VERSION = "3.7.0"
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 
 POPULAR_LANGUAGES = [
@@ -128,12 +128,12 @@ def run_translation(input_path, target_lang, model_name, host, msg_queue, stop_e
             if run.text.strip() and len(run.text.strip()) >= 2
         ]
         total = len(translatable)
-        msg_queue.put(("log", f"Знайдено {total} текстових фрагментів для перекладу"))
+        msg_queue.put(("log", f"Знайдено {total} текстових фрагментів"))
         msg_queue.put(("total", total))
 
         for idx, run in enumerate(translatable, 1):
             if stop_event.is_set():
-                msg_queue.put(("log", "⛔ Переклад зупинено користувачем"))
+                msg_queue.put(("log", "⛔ Зупинено користувачем"))
                 msg_queue.put(("stopped", None))
                 return
 
@@ -158,7 +158,7 @@ def run_translation(input_path, target_lang, model_name, host, msg_queue, stop_e
 
         doc.save(output_path)
         log_file(f"[FILE] Saved: {output_path}")
-        msg_queue.put(("log", f"Збережено → TR_{target_lang}_{filename}"))
+        msg_queue.put(("log", f"✓ Збережено → TR_{target_lang}_{filename}"))
         msg_queue.put(("done", output_path))
 
     except Exception as e:
@@ -179,11 +179,11 @@ class AllLanguagesDialog(ctk.CTkToplevel):
         self.lift()
         self.focus_force()
 
-        ctk.CTkLabel(self, text="Пошук мови:", anchor="w").pack(fill="x", padx=12, pady=(12, 4))
+        ctk.CTkLabel(self, text="Пошук:", anchor="w").pack(fill="x", padx=12, pady=(12, 4))
         self._search_var = ctk.StringVar()
         self._search_var.trace_add("write", self._on_search)
         ctk.CTkEntry(self, textvariable=self._search_var,
-                     placeholder_text="Введіть назву...").pack(fill="x", padx=12, pady=(0, 8))
+                     placeholder_text="Введіть назву мови...").pack(fill="x", padx=12, pady=(0, 8))
 
         self._list_frame = ctk.CTkScrollableFrame(self, height=380)
         self._list_frame.pack(fill="both", expand=True, padx=12, pady=(0, 8))
@@ -213,6 +213,30 @@ class AllLanguagesDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _divider(parent):
+    """Thin horizontal separator line."""
+    ctk.CTkFrame(parent, height=1, fg_color=("gray75", "gray30")).pack(
+        fill="x", padx=16, pady=(8, 4)
+    )
+
+
+def _section_header(parent, text_var_holder, text, command):
+    """Collapsible section header row, returns the button widget."""
+    row = ctk.CTkFrame(parent, fg_color="transparent")
+    row.pack(fill="x", padx=16, pady=(4, 2))
+    btn = ctk.CTkButton(
+        row, text=text, anchor="w",
+        fg_color="transparent", hover_color=("gray82", "gray25"),
+        font=ctk.CTkFont(size=12, weight="bold"),
+        text_color=("gray35", "gray65"),
+        command=command,
+    )
+    btn.pack(side="left")
+    return row, btn
+
+
 # ── Main App ──────────────────────────────────────────────────────────────────
 
 class App(ctk.CTk):
@@ -240,148 +264,178 @@ class App(ctk.CTk):
         self._build_ui()
         self._refresh_models()
 
-    def _build_ui(self):
-        pad = {"padx": 16, "pady": 5}
+    # ── UI build ──────────────────────────────────────────────────────────────
 
-        # ── Header ──
+    def _build_ui(self):
+        W = 600  # content width
+
+        # ── Header ──────────────────────────────────────────────────────────
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=16, pady=(14, 0))
+        header.pack(fill="x", padx=16, pady=(14, 6))
+
         ctk.CTkLabel(
-            header, text=f"Перекладач DOCX  v{VERSION}",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            header, text=f"Перекладач DOCX",
+            font=ctk.CTkFont(size=19, weight="bold"),
         ).pack(side="left")
+        ctk.CTkLabel(
+            header, text=f"v{VERSION}",
+            font=ctk.CTkFont(size=13), text_color="gray",
+        ).pack(side="left", padx=(6, 0))
+
         theme_frame = ctk.CTkFrame(header, fg_color="transparent")
         theme_frame.pack(side="right")
         ctk.CTkLabel(theme_frame, text="☀", font=ctk.CTkFont(size=14)).pack(side="left", padx=(0, 2))
-        self._theme_switch = ctk.CTkSwitch(theme_frame, text="", width=44, command=self._toggle_theme)
+        self._theme_switch = ctk.CTkSwitch(
+            theme_frame, text="", width=44, command=self._toggle_theme,
+        )
         self._theme_switch.pack(side="left")
         self._theme_switch.select()
         ctk.CTkLabel(theme_frame, text="🌙", font=ctk.CTkFont(size=14)).pack(side="left", padx=(2, 0))
 
-        ctk.CTkLabel(
-            self, text=f"Журнал: {_log_path}",
-            font=ctk.CTkFont(size=11), text_color="gray",
-        ).pack(pady=(2, 8))
+        # ── Settings card ────────────────────────────────────────────────────
+        card = ctk.CTkFrame(self, fg_color=("gray88", "gray17"), corner_radius=10)
+        card.pack(fill="x", padx=14, pady=(0, 4))
 
-        # ── File ──
-        file_frame = ctk.CTkFrame(self, fg_color="transparent")
-        file_frame.pack(fill="x", **pad)
-        ctk.CTkLabel(file_frame, text="Файл:", width=80, anchor="w").pack(side="left")
+        # File row
+        file_row = ctk.CTkFrame(card, fg_color="transparent")
+        file_row.pack(fill="x", padx=14, pady=(12, 5))
+        ctk.CTkLabel(file_row, text="Файл:", width=72, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
         self._file_var = ctk.StringVar(value="Файл не вибрано")
-        ctk.CTkEntry(file_frame, textvariable=self._file_var, state="readonly",
-                     width=386).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(file_frame, text="Огляд", width=80, command=self._browse).pack(side="left")
+        ctk.CTkEntry(file_row, textvariable=self._file_var, state="readonly",
+                     width=W - 72 - 90).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(file_row, text="Огляд", width=82,
+                      command=self._browse).pack(side="left")
 
-        # ── Language ──
-        lang_frame = ctk.CTkFrame(self, fg_color="transparent")
-        lang_frame.pack(fill="x", **pad)
-        ctk.CTkLabel(lang_frame, text="Мова:", width=80, anchor="w").pack(side="left")
+        # Language row
+        lang_row = ctk.CTkFrame(card, fg_color="transparent")
+        lang_row.pack(fill="x", padx=14, pady=5)
+        ctk.CTkLabel(lang_row, text="Мова:", width=72, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
         self._lang_menu = ctk.CTkOptionMenu(
-            lang_frame, values=POPULAR_LANGUAGES, width=220,
+            lang_row, values=POPULAR_LANGUAGES, width=230,
             command=self._on_lang_select,
         )
         self._lang_menu.set(POPULAR_LANGUAGES[0])
         self._lang_menu.pack(side="left", padx=(0, 8))
-        ctk.CTkButton(lang_frame, text="Всі мови...", width=110,
+        ctk.CTkButton(lang_row, text="Всі мови...", width=110,
                       command=self._open_all_langs).pack(side="left")
 
-        # ── Model ──
-        model_frame = ctk.CTkFrame(self, fg_color="transparent")
-        model_frame.pack(fill="x", **pad)
-        ctk.CTkLabel(model_frame, text="Модель:", width=80, anchor="w").pack(side="left")
-        self._model_var = ctk.StringVar(value="Завантаження...")
+        # Model row
+        model_row = ctk.CTkFrame(card, fg_color="transparent")
+        model_row.pack(fill="x", padx=14, pady=(5, 12))
+        ctk.CTkLabel(model_row, text="Модель:", width=72, anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        self._model_var = ctk.StringVar(value="Підключення...")
         self._model_menu = ctk.CTkOptionMenu(
-            model_frame, variable=self._model_var, values=["Завантаження..."], width=386,
+            model_row, variable=self._model_var,
+            values=["Підключення..."], width=W - 72 - 90,
         )
         self._model_menu.pack(side="left", padx=(0, 8))
-        ctk.CTkButton(model_frame, text="↺", width=40, command=self._refresh_models).pack(side="left")
-
-        # ── Server settings (collapsible) ──
-        srv_toggle_frame = ctk.CTkFrame(self, fg_color="transparent")
-        srv_toggle_frame.pack(fill="x", padx=16, pady=(4, 0))
-        self._srv_toggle_btn = ctk.CTkButton(
-            srv_toggle_frame, text="▶  Налаштування сервера", anchor="w",
-            fg_color="transparent", hover_color=("gray80", "gray25"),
-            font=ctk.CTkFont(size=12), text_color=("gray40", "gray60"),
-            command=self._toggle_server,
+        ctk.CTkButton(model_row, text="↺", width=36,
+                      command=self._refresh_models).pack(side="left", padx=(0, 6))
+        self._status_dot = ctk.CTkLabel(
+            model_row, text="●", font=ctk.CTkFont(size=16),
+            text_color="gray", width=20,
         )
-        self._srv_toggle_btn.pack(side="left")
+        self._status_dot.pack(side="left")
 
-        self._server_frame = ctk.CTkFrame(self, fg_color=("gray90", "gray20"), corner_radius=8)
+        # ── Server settings ──────────────────────────────────────────────────
+        _divider(self)
+        self._srv_hdr_row, self._srv_toggle_btn = _section_header(
+            self, None, "▶  Налаштування сервера", self._toggle_server,
+        )
 
+        self._server_frame = ctk.CTkFrame(self, fg_color=("gray88", "gray17"), corner_radius=8)
         srv_inner = ctk.CTkFrame(self._server_frame, fg_color="transparent")
-        srv_inner.pack(fill="x", padx=12, pady=8)
+        srv_inner.pack(fill="x", padx=12, pady=10)
         ctk.CTkLabel(srv_inner, text="Адреса Ollama:", width=110, anchor="w").pack(side="left")
         self._host_var = ctk.StringVar(value=DEFAULT_OLLAMA_HOST)
-        ctk.CTkEntry(srv_inner, textvariable=self._host_var, width=320).pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(srv_inner, textvariable=self._host_var, width=310).pack(side="left", padx=(0, 8))
         ctk.CTkButton(srv_inner, text="Застосувати", width=110,
                       command=self._apply_server).pack(side="left")
 
-        # ── Log toggle ──
-        log_hdr = ctk.CTkFrame(self, fg_color="transparent")
-        log_hdr.pack(fill="x", padx=16, pady=(8, 2))
+        # ── Log section ──────────────────────────────────────────────────────
+        _divider(self)
+        log_hdr_row = ctk.CTkFrame(self, fg_color="transparent")
+        log_hdr_row.pack(fill="x", padx=16, pady=(4, 2))
         self._log_toggle_btn = ctk.CTkButton(
-            log_hdr, text="▼  Журнал виконання", anchor="w",
-            fg_color="transparent", hover_color=("gray80", "gray25"),
-            font=ctk.CTkFont(size=12), text_color=("gray40", "gray60"),
+            log_hdr_row, text="▼  Журнал виконання", anchor="w",
+            fg_color="transparent", hover_color=("gray82", "gray25"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("gray35", "gray65"),
             command=self._toggle_log,
         )
         self._log_toggle_btn.pack(side="left")
         self._log_enabled_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            log_hdr, text="Зберігати у файл", variable=self._log_enabled_var,
-            font=ctk.CTkFont(size=12), command=self._toggle_logging,
+            log_hdr_row, text="Зберігати у файл",
+            variable=self._log_enabled_var,
+            font=ctk.CTkFont(size=12),
+            command=self._toggle_logging,
         ).pack(side="right")
 
         self._log_box = ctk.CTkTextbox(
-            self, height=180, font=ctk.CTkFont(family="Consolas", size=12),
+            self, height=175, font=ctk.CTkFont(family="Consolas", size=12),
             state="disabled", wrap="word",
         )
-        self._log_box.pack(fill="x", padx=16)
+        self._log_box.pack(fill="x", padx=14, pady=(2, 0))
 
-        # ── Progress ──
-        self._progress_label = ctk.CTkLabel(
-            self, text="", text_color="gray", font=ctk.CTkFont(size=12),
-        )
-        self._progress_label.pack(pady=(8, 2))
-        self._progressbar = ctk.CTkProgressBar(self, width=600)
+        # ── Progress row ─────────────────────────────────────────────────────
+        _divider(self)
+        progress_row = ctk.CTkFrame(self, fg_color="transparent")
+        progress_row.pack(fill="x", padx=14, pady=(2, 4))
+        self._progressbar = ctk.CTkProgressBar(progress_row)
         self._progressbar.set(0)
-        self._progressbar.pack(padx=16, pady=(0, 10))
-
-        # ── Buttons row ──
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(pady=(4, 16))
-        self._start_btn = ctk.CTkButton(
-            btn_frame, text="Розпочати переклад", height=42, width=280,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            command=self._start,
-        )
-        self._start_btn.pack(side="left", padx=(0, 10))
+        self._progressbar.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self._stop_btn = ctk.CTkButton(
-            btn_frame, text="⛔ Стоп", height=42, width=120,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            progress_row, text="■ Стоп", width=90, height=26,
+            font=ctk.CTkFont(size=12, weight="bold"),
             fg_color="#c0392b", hover_color="#96281b",
             state="disabled", command=self._stop,
         )
         self._stop_btn.pack(side="left")
 
+        self._progress_label = ctk.CTkLabel(
+            self, text="", text_color="gray", font=ctk.CTkFont(size=11),
+        )
+        self._progress_label.pack(pady=(0, 4))
+
+        # ── Start button ─────────────────────────────────────────────────────
+        self._start_btn = ctk.CTkButton(
+            self, text="Розпочати переклад", height=42,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._start,
+        )
+        self._start_btn.pack(fill="x", padx=14, pady=(2, 8))
+
+        # ── Status bar ───────────────────────────────────────────────────────
+        ctk.CTkFrame(self, height=1, fg_color=("gray75", "gray30")).pack(fill="x")
+        self._statusbar = ctk.CTkLabel(
+            self, text=f"Журнал: {_log_path}",
+            font=ctk.CTkFont(size=10), text_color="gray", anchor="w",
+        )
+        self._statusbar.pack(fill="x", padx=12, pady=(3, 4))
+
+    # ── Window resize ─────────────────────────────────────────────────────────
+
     def _fit_window(self):
         self.update_idletasks()
         self.geometry(f"640x{self.winfo_reqheight()}")
 
-    # ── Theme ──
+    # ── Theme ─────────────────────────────────────────────────────────────────
 
     def _toggle_theme(self):
         self._theme = "dark" if self._theme_switch.get() else "light"
         ctk.set_appearance_mode(self._theme)
 
-    # ── Server settings ──
+    # ── Server settings ───────────────────────────────────────────────────────
 
     def _toggle_server(self):
         self._server_visible = not self._server_visible
         if self._server_visible:
-            self._server_frame.pack(fill="x", padx=16, pady=(0, 4),
-                                    before=self._log_toggle_btn.master)
+            self._server_frame.pack(fill="x", padx=14, pady=(0, 4),
+                                    after=self._srv_hdr_row)
             self._srv_toggle_btn.configure(text="▼  Налаштування сервера")
         else:
             self._server_frame.pack_forget()
@@ -393,19 +447,19 @@ class App(ctk.CTk):
         if not host:
             messagebox.showwarning("Порожня адреса", "Введіть адресу сервера Ollama.")
             return
-        self._append_log(f"Адреса сервера змінена: {host}")
+        self._append_log(f"Адреса сервера: {host}")
         self._refresh_models()
 
     def _get_host(self):
         return self._host_var.get().strip() or DEFAULT_OLLAMA_HOST
 
-    # ── Log toggle ──
+    # ── Log section ───────────────────────────────────────────────────────────
 
     def _toggle_log(self):
         self._log_visible = not self._log_visible
         if self._log_visible:
-            self._log_box.pack(fill="x", padx=16,
-                               before=self._progress_label)
+            self._log_box.pack(fill="x", padx=14, pady=(2, 0),
+                               before=self._progressbar.master)
             self._log_toggle_btn.configure(text="▼  Журнал виконання")
         else:
             self._log_box.pack_forget()
@@ -417,10 +471,12 @@ class App(ctk.CTk):
         _logging_enabled = self._log_enabled_var.get()
         if _logging_enabled:
             self._append_log(f"Логування увімкнено → {_log_path}")
+            self._statusbar.configure(text=f"Журнал: {_log_path}")
         else:
             self._append_log("Логування вимкнено")
+            self._statusbar.configure(text="Логування вимкнено")
 
-    # ── Language ──
+    # ── Language ──────────────────────────────────────────────────────────────
 
     def _on_lang_select(self, value):
         self._selected_lang = LANG_UK_TO_EN.get(value, value)
@@ -430,18 +486,17 @@ class App(ctk.CTk):
 
     def _set_custom_lang(self, lang):
         self._selected_lang = lang
-        values = list(self._lang_menu.cget("values"))
-        # Replace previous custom entry or add new one after popular list
-        values = [v for v in values if v in POPULAR_LANGUAGES]
+        values = [v for v in self._lang_menu.cget("values") if v in POPULAR_LANGUAGES]
         values.append(lang)
         self._lang_menu.configure(values=values)
         self._lang_menu.set(lang)
 
-    # ── Models ──
+    # ── Models ────────────────────────────────────────────────────────────────
 
     def _refresh_models(self):
         self._model_menu.configure(state="disabled")
         self._model_var.set("Підключення...")
+        self._status_dot.configure(text_color="#f39c12")  # yellow = connecting
 
         def fetch():
             host = self._get_host()
@@ -461,14 +516,16 @@ class App(ctk.CTk):
     def _set_models(self, models):
         self._model_menu.configure(values=models, state="normal")
         self._model_var.set(models[0])
-        self._append_log(f"Ollama підключено. Доступно моделей: {len(models)}")
+        self._status_dot.configure(text_color="#27ae60")  # green = connected
+        self._append_log(f"Ollama підключено  •  моделей: {len(models)}")
 
     def _set_models_error(self, err):
         self._model_menu.configure(values=["— немає з'єднання —"], state="normal")
         self._model_var.set("— немає з'єднання —")
+        self._status_dot.configure(text_color="#c0392b")  # red = error
         self._append_log(f"[ПОМИЛКА] Ollama: {err}")
 
-    # ── Log ──
+    # ── Log box ───────────────────────────────────────────────────────────────
 
     def _append_log(self, msg):
         self._log_box.configure(state="normal")
@@ -481,7 +538,7 @@ class App(ctk.CTk):
         self._log_box.delete("1.0", "end")
         self._log_box.configure(state="disabled")
 
-    # ── File ──
+    # ── File ──────────────────────────────────────────────────────────────────
 
     def _browse(self):
         path = filedialog.askopenfilename(
@@ -491,7 +548,7 @@ class App(ctk.CTk):
         if path:
             self._file_var.set(path)
 
-    # ── Start / Stop ──
+    # ── Start / Stop ──────────────────────────────────────────────────────────
 
     def _start(self):
         input_path = self._file_var.get()
@@ -542,7 +599,7 @@ class App(ctk.CTk):
                     total = self._total_runs or 1
                     self._progressbar.set(done / total)
                     self._progress_label.configure(
-                        text=f"{done} / {total}  ({int(done / total * 100)}%)"
+                        text=f"{done} / {total}  •  {int(done / total * 100)}%"
                     )
                 elif kind == "done":
                     self._on_done(data)
@@ -559,25 +616,26 @@ class App(ctk.CTk):
 
     def _on_done(self, output_path):
         self._progressbar.set(1)
-        self._progress_label.configure(text="Готово!")
+        self._progress_label.configure(text="✓ Готово!")
         self._append_log(f"\n✓ Переклад завершено!\n  {output_path}")
         self._start_btn.configure(state="normal", text="Розпочати переклад")
-        self._stop_btn.configure(state="disabled", text="⛔ Стоп")
+        self._stop_btn.configure(state="disabled", text="■ Стоп")
         messagebox.showinfo("Готово", f"Файл збережено:\n{output_path}")
 
     def _on_stopped(self):
-        self._progress_label.configure(text="Зупинено")
+        self._progress_label.configure(text="⛔ Зупинено")
         self._start_btn.configure(state="normal", text="Розпочати переклад")
-        self._stop_btn.configure(state="disabled", text="⛔ Стоп")
+        self._stop_btn.configure(state="disabled", text="■ Стоп")
 
     def _on_error(self, err):
         self._append_log(f"\n[ПОМИЛКА] {err}")
         self._start_btn.configure(state="normal", text="Розпочати переклад")
-        self._stop_btn.configure(state="disabled", text="⛔ Стоп")
+        self._stop_btn.configure(state="disabled", text="■ Стоп")
         messagebox.showerror("Помилка", err)
 
 
 if __name__ == "__main__":
     app = App()
     app.mainloop()
-    _log_file.close()
+    if _log_file is not None:
+        _log_file.close()
