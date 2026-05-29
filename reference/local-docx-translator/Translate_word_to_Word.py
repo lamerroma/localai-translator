@@ -18,7 +18,7 @@ from docx import Document
 from docx.shared import Pt
 import customtkinter as ctk
 
-VERSION = "3.5.0"
+VERSION = "3.6.0"
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 
 POPULAR_LANGUAGES = [
@@ -73,10 +73,16 @@ _theme_path = os.path.join(_app_dir, "theme_custom.json")
 
 _log_name = f"log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 _log_path = os.path.join(_app_dir, _log_name)
-_log_file = open(_log_path, "w", encoding="utf-8")
+_log_file = None
+_logging_enabled = False
 
 
 def log_file(msg):
+    global _log_file
+    if not _logging_enabled:
+        return
+    if _log_file is None:
+        _log_file = open(_log_path, "w", encoding="utf-8")
     _log_file.write(msg + "\n")
     _log_file.flush()
 
@@ -321,6 +327,11 @@ class App(ctk.CTk):
             command=self._toggle_log,
         )
         self._log_toggle_btn.pack(side="left")
+        self._log_enabled_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            log_hdr, text="Зберігати у файл", variable=self._log_enabled_var,
+            font=ctk.CTkFont(size=12), command=self._toggle_logging,
+        ).pack(side="right")
 
         self._log_box = ctk.CTkTextbox(
             self, height=180, font=ctk.CTkFont(family="Consolas", size=12),
@@ -400,6 +411,14 @@ class App(ctk.CTk):
             self._log_box.pack_forget()
             self._log_toggle_btn.configure(text="▶  Журнал виконання")
         self._fit_window()
+
+    def _toggle_logging(self):
+        global _logging_enabled
+        _logging_enabled = self._log_enabled_var.get()
+        if _logging_enabled:
+            self._append_log(f"Логування увімкнено → {_log_path}")
+        else:
+            self._append_log("Логування вимкнено")
 
     # ── Language ──
 
