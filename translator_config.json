@@ -1,6 +1,6 @@
 {
   "base_url": "http://localhost:11434/v1",
-  "model": "translategemma:4b",
+  "model": "translategemma:12b",
   "max_tokens": 4096,
   "llm_timeout": 180,
   "chunk_size": 6000,

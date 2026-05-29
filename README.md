@@ -7,7 +7,7 @@
 > Адаптуємо під Ollama та веб-інтерфейс на FastAPI.
 >
 > Перехід з LocalAI на **Ollama** зумовлений наявністю відеокарти з **12 GB VRAM** —
-> TranslateGemma 4B повністю вміщається у VRAM та працює значно швидше порівняно з CPU-інференсом.
+> TranslateGemma 12B повністю вміщається у VRAM та працює значно швидше порівняно з CPU-інференсом.
 
 
 
@@ -33,7 +33,7 @@
 |-------------|--------|
 | Сервер      | FastAPI + Uvicorn |
 | LLM бекенд  | Ollama (OpenAI-сумісний API) |
-| Модель      | TranslateGemma 4B |
+| Модель      | TranslateGemma 12B |
 | Адреса LLM  | `http://localhost:11434/v1` |
 | Порт сервера | `7860` |
 
@@ -43,7 +43,7 @@
 
 ```bash
 pip install fastapi uvicorn requests pypdf python-docx
-ollama pull translategemma:4b
+ollama pull translategemma:12b
 python translate_server.py
 ```
 

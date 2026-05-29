@@ -16,7 +16,7 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "translator_config.json")
 
 DEFAULTS = {
     "base_url":        "http://localhost:11434/v1",
-    "model":           "yanolja_yanoljanext-rosetta-12b-2510",
+    "model":           "translategemma:12b",
     "max_tokens":      4096,
     "llm_timeout":     180,
     "chunk_size":      6000,
