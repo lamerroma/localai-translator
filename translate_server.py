@@ -245,6 +245,246 @@ def call_llm(messages: list, stop_event: threading.Event) -> str | None:
     return result.replace("⟨P⟩", "\n\n").replace("⟨N⟩", "\n")
 
 
+def _translate_unit(text: str, lang_from: str, lang_to: str,
+                    sys_msg: str, tpl: str, ctx: str,
+                    stop_event: threading.Event) -> str | None:
+    """Translate a single short piece of text (one run / one block)."""
+    if not text or len(text.strip()) < 2:
+        return text
+    lang_to_code = LANG_MAP.get(lang_to, lang_to)
+    lang_from_code = LANG_MAP.get(lang_from)
+    direction = (f"from {lang_from_code} into {lang_to_code}"
+                 if lang_from_code else f"into {lang_to_code}")
+    prompt = (tpl
+              .replace("{text}", text)
+              .replace("{direction}", direction)
+              .replace("{lang}", lang_to_code)
+              .replace("{context}", ctx))
+    messages = [
+        {"role": "system", "content": sys_msg},
+        {"role": "user", "content": prompt},
+    ]
+    return call_llm(messages, stop_event)
+
+
+def translate_docx_bytes(content, base_name, lang_from, lang_to,
+                         sys_msg, tpl, ctx, stop_event):
+    """Generator. Yields ('log'|'progress'|'error'|'stopped'|'done', ...)."""
+    try:
+        from docx import Document
+        from docx.shared import Pt
+    except ImportError:
+        yield ("error", "Бібліотека python-docx не встановлена")
+        return
+
+    try:
+        doc = Document(io.BytesIO(content))
+    except Exception as e:
+        yield ("error", f"Не вдалось відкрити DOCX: {e}")
+        return
+
+    all_paras = list(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                all_paras.extend(cell.paragraphs)
+
+    runs = [r for p in all_paras for r in p.runs
+            if r.text.strip() and len(r.text.strip()) >= 2]
+    total = len(runs)
+    yield ("log", f"DOCX: {total} текстових фрагментів")
+
+    if total == 0:
+        yield ("error", "У файлі не знайдено тексту для перекладу")
+        return
+
+    for i, run in enumerate(runs, 1):
+        if stop_event.is_set():
+            yield ("stopped",)
+            return
+
+        original = run.text.strip()
+        try:
+            translated = _translate_unit(original, lang_from, lang_to,
+                                         sys_msg, tpl, ctx, stop_event)
+        except Exception as e:
+            yield ("error", f"Помилка перекладу: {e}")
+            return
+
+        if translated is None:
+            yield ("stopped",)
+            return
+
+        if len(translated) > len(original) * 1.3 and run.font.size:
+            try:
+                old_pt = run.font.size.pt
+                run.font.size = Pt(old_pt - 1)
+            except Exception:
+                pass
+
+        run.text = translated
+        yield ("progress", f"Фрагмент {i}/{total}", round(i / total * 100))
+
+    out = io.BytesIO()
+    doc.save(out)
+    yield ("done",
+           f"{base_name}_translated.docx",
+           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+           out.getvalue())
+
+
+def translate_pdf_bytes(content, base_name, lang_from, lang_to,
+                        sys_msg, tpl, ctx, stop_event):
+    try:
+        import fitz
+    except ImportError:
+        yield ("error", "Бібліотека PyMuPDF не встановлена")
+        return
+
+    try:
+        doc = fitz.open(stream=content, filetype="pdf")
+    except Exception as e:
+        yield ("error", f"Не вдалось відкрити PDF: {e}")
+        return
+
+    total_pages = len(doc)
+    yield ("log", f"PDF: {total_pages} сторінок")
+
+    for page_num in range(total_pages):
+        if stop_event.is_set():
+            doc.close()
+            yield ("stopped",)
+            return
+
+        page = doc[page_num]
+        raw = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+        blocks = [b for b in raw["blocks"] if b["type"] == 0]
+
+        items = []
+        for block in blocks:
+            lines_text = []
+            fontsize = 11
+            color = 0
+            for line in block["lines"]:
+                for span in line["spans"]:
+                    if span["text"].strip():
+                        lines_text.append(span["text"])
+                        fontsize = span["size"]
+                        color = span["color"]
+            full_text = " ".join(lines_text).strip()
+            if full_text:
+                items.append((fitz.Rect(block["bbox"]), full_text, fontsize, color))
+
+        pct = round((page_num + 1) / total_pages * 100)
+        if not items:
+            yield ("progress", f"Сторінка {page_num + 1}/{total_pages}", pct)
+            continue
+
+        for rect, _, _, _ in items:
+            page.add_redact_annot(rect, fill=(1, 1, 1))
+        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+
+        for rect, text, fontsize, color_int in items:
+            if stop_event.is_set():
+                doc.close()
+                yield ("stopped",)
+                return
+
+            try:
+                translated = _translate_unit(text, lang_from, lang_to,
+                                             sys_msg, tpl, ctx, stop_event)
+            except Exception as e:
+                doc.close()
+                yield ("error", f"Помилка перекладу: {e}")
+                return
+
+            if translated is None:
+                doc.close()
+                yield ("stopped",)
+                return
+
+            r = ((color_int >> 16) & 0xFF) / 255
+            g = ((color_int >> 8) & 0xFF) / 255
+            b = (color_int & 0xFF) / 255
+
+            page.insert_textbox(
+                rect, translated,
+                fontsize=max(fontsize - 0.5, 6),
+                color=(r, g, b),
+                align=0,
+                overflow="ignore",
+            )
+
+        yield ("progress", f"Сторінка {page_num + 1}/{total_pages}", pct)
+
+    out = io.BytesIO()
+    doc.save(out, garbage=4, deflate=True)
+    doc.close()
+    yield ("done",
+           f"{base_name}_translated.pdf",
+           "application/pdf",
+           out.getvalue())
+
+
+def translate_txt_bytes(content, base_name, lang_from, lang_to,
+                        sys_msg, tpl, ctx, stop_event):
+    """Chunk-based translation (used for .txt and fallback)."""
+    try:
+        text = content.decode("utf-8", errors="replace")
+    except Exception as e:
+        yield ("error", f"Не вдалось прочитати файл: {e}")
+        return
+
+    chunks = split_chunks(text)
+    total = len(chunks)
+    yield ("log", f"TXT: {total} частин")
+
+    if total == 0:
+        yield ("error", "Файл порожній")
+        return
+
+    lang_to_code = LANG_MAP.get(lang_to, lang_to)
+    lang_from_code = LANG_MAP.get(lang_from)
+    direction = (f"from {lang_from_code} into {lang_to_code}"
+                 if lang_from_code else f"into {lang_to_code}")
+
+    translated_chunks = []
+    for i, chunk in enumerate(chunks, 1):
+        if stop_event.is_set():
+            yield ("stopped",)
+            return
+
+        marked = chunk.replace("\r\n", "\n").replace("\n\n", "⟨P⟩").replace("\n", "⟨N⟩")
+        prompt = (tpl
+                  .replace("{text}", marked)
+                  .replace("{direction}", direction)
+                  .replace("{lang}", lang_to_code)
+                  .replace("{context}", ctx))
+        messages = [
+            {"role": "system", "content": sys_msg},
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            result = call_llm(messages, stop_event)
+        except Exception as e:
+            yield ("error", str(e))
+            return
+
+        if result is None:
+            yield ("stopped",)
+            return
+
+        translated_chunks.append(result)
+        yield ("progress", f"Частина {i}/{total}", round(i / total * 100))
+
+    final = "\n\n".join(translated_chunks)
+    yield ("done",
+           f"{base_name}_translated.txt",
+           "text/plain; charset=utf-8",
+           final.encode("utf-8"))
+
+
 USER_HTML = r"""<!DOCTYPE html>
 <html lang="uk">
 <head>
@@ -1383,92 +1623,71 @@ async def translate_file_endpoint(
 ):
     content = await file.read()
     filename = file.filename or "file.txt"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
+    base = filename.rsplit(".", 1)[0] if "." in filename else filename
 
     request_id = str(uuid.uuid4())
     stop_event = threading.Event()
     _active[request_id] = stop_event
 
     def generate():
-        def log(msg: str):
-            return f"data: {json.dumps({'type': 'log', 'text': msg})}\n\n"
-
         def ts():
             return datetime.datetime.now().strftime("%H:%M:%S")
 
+        def log(msg: str):
+            return f"data: {json.dumps({'type': 'log', 'text': f'[{ts()}] {msg}'})}\n\n"
+
         try:
             yield f"data: {json.dumps({'type': 'id', 'text': request_id})}\n\n"
+            yield log(f"File: {filename} ({len(content)} bytes)")
 
-            yield log(f"[{ts()}] File: {filename} ({len(content)} bytes)")
-            try:
-                text = extract_text(filename, content)
-            except Exception as e:
-                yield log(f"[{ts()}] ERROR extracting text: {e}")
-                yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
-                return
-
-            yield log(f"[{ts()}] Extracted {len(text)} chars")
-
-            chunks = split_chunks(text)
-            total = len(chunks)
-            yield log(f"[{ts()}] Split into {total} chunk(s)")
-
-            lang_to_code = LANG_MAP.get(lang_to, lang_to)
-            lang_from_code = LANG_MAP.get(lang_from)
-            direction = f"from {lang_from_code} into {lang_to_code}" if lang_from_code else f"into {lang_to_code}"
             tpl = prompt_template.strip() or CFG["prompt_template"]
             ctx = context.strip() or "document"
             sys_msg = system_msg.strip() or CFG["system_msg"]
 
-            translated_chunks = []
-            for i, chunk in enumerate(chunks, 1):
-                if stop_event.is_set():
-                    yield log(f"[{ts()}] Stopped by user")
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return
+            if ext == "docx":
+                it = translate_docx_bytes(content, base, lang_from, lang_to,
+                                          sys_msg, tpl, ctx, stop_event)
+            elif ext == "pdf":
+                it = translate_pdf_bytes(content, base, lang_from, lang_to,
+                                         sys_msg, tpl, ctx, stop_event)
+            else:
+                it = translate_txt_bytes(content, base, lang_from, lang_to,
+                                         sys_msg, tpl, ctx, stop_event)
 
-                pct = round((i - 1) / total * 100)
-                yield f"data: {json.dumps({'type': 'progress', 'text': f'Chunk {i}/{total}...', 'pct': pct})}\n\n"
-                yield log(f"[{ts()}] Translating chunk {i}/{total} ({len(chunk)} chars)...")
-
-                marked = chunk.replace("\r\n", "\n").replace("\n\n", "⟨P⟩").replace("\n", "⟨N⟩")
-                prompt = (tpl
-                          .replace("{text}", marked)
-                          .replace("{direction}", direction)
-                          .replace("{lang}", lang_to_code)
-                          .replace("{context}", ctx))
-                messages = [
-                    {"role": "system", "content": sys_msg},
-                    {"role": "user", "content": prompt},
-                ]
-
-                try:
-                    result = call_llm(messages, stop_event)
-                except req_lib.exceptions.Timeout:
-                    yield log(f"[{ts()}] ERROR: Timeout on chunk {i}")
-                    yield f"data: {json.dumps({'type': 'error', 'text': f'Timeout on chunk {i}'})}\n\n"
-                    return
-                except Exception as e:
-                    yield log(f"[{ts()}] ERROR: {e}")
-                    yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
-                    return
-
-                if result is None:
-                    yield log(f"[{ts()}] Stopped by user")
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return
-
-                translated_chunks.append(result)
-                yield log(f"[{ts()}] Chunk {i}/{total} done — {len(result)} chars")
-
-            final = "\n\n".join(translated_chunks)
-            file_id = str(uuid.uuid4())
-            base = filename.rsplit(".", 1)[0] if "." in filename else filename
-            out_filename = base + "_translated.txt"
-            _results[file_id] = (out_filename, final.encode("utf-8"))
-
-            yield log(f"[{ts()}] All done — {len(final)} chars total")
-            yield f"data: {json.dumps({'type': 'download', 'url': f'/download/{file_id}', 'filename': out_filename})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            try:
+                for event in it:
+                    kind = event[0]
+                    if kind == "log":
+                        yield log(event[1])
+                    elif kind == "progress":
+                        yield f"data: {json.dumps({'type': 'progress', 'text': event[1], 'pct': event[2]})}\n\n"
+                    elif kind == "error":
+                        yield log(f"ERROR: {event[1]}")
+                        yield f"data: {json.dumps({'type': 'error', 'text': event[1]})}\n\n"
+                        return
+                    elif kind == "stopped":
+                        yield log("Зупинено користувачем")
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        return
+                    elif kind == "done":
+                        _, out_filename, mime, data = event
+                        file_id = str(uuid.uuid4())
+                        _results[file_id] = (out_filename, data, mime)
+                        yield log(f"Готово — {len(data)} bytes")
+                        yield f"data: {json.dumps({'type': 'download', 'url': f'/download/{file_id}', 'filename': out_filename})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        return
+            except req_lib.exceptions.Timeout:
+                yield log("ERROR: Timeout")
+                yield f"data: {json.dumps({'type': 'error', 'text': 'Timeout під час перекладу'})}\n\n"
+                return
+            except Exception as e:
+                import traceback
+                yield log(f"ERROR: {e}")
+                yield log(traceback.format_exc())
+                yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+                return
 
         finally:
             _active.pop(request_id, None)
@@ -1481,10 +1700,10 @@ def download_file(file_id: str):
     entry = _results.get(file_id)
     if not entry:
         return JSONResponse({"error": "not found"}, status_code=404)
-    filename, data = entry
+    filename, data, mime = entry
     return Response(
         content=data,
-        media_type="text/plain; charset=utf-8",
+        media_type=mime,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
