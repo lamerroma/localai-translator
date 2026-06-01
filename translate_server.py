@@ -18,8 +18,8 @@ from pydantic import BaseModel
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "translator_config.json")
 
 DEFAULTS = {
-    "base_url":        "http://192.168.200.133:11434/v1",
-    "model":           "gemma4:e4b",
+    "base_url":        "http://127.0.0.1:11434/v1",
+    "model":           "rinex20/translategemma3",
     "max_tokens":      2048,
     "llm_timeout":     180,
     "chunk_size":      3000,

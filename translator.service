@@ -1,0 +1,15 @@
+[Unit]
+Description=LocalAI Translator Web App
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=coyotl
+WorkingDirectory=/home/coyotl/translater
+ExecStart=/home/coyotl/translater/venv/bin/python /home/coyotl/translater/translate_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
