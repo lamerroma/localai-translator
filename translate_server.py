@@ -1728,46 +1728,29 @@ def translate(req: TranslateRequest, request: Request):
             yield f"data: {json.dumps({'type': 'queue', 'ahead': 0})}\n\n"
 
             normalized = req.text.replace("\r\n", "\n")
-            paragraphs = normalized.split("\n\n")
 
             yield log_event(f"[{ts()}] URL:   {CFG['base_url']}")
             yield log_event(f"[{ts()}] Model: {CFG['model']}")
             yield log_event(f"[{ts()}] Lang:  {req.lang_from} → {req.lang_to}")
-            yield log_event(f"[{ts()}] Text:  {len(req.text)} chars, {len(paragraphs)} paragraph(s)")
+            yield log_event(f"[{ts()}] Text:  {len(req.text)} chars")
 
             try:
-                translated_parts: list[str] = []
-                for i, para in enumerate(paragraphs):
-                    if stop_event.is_set():
-                        final_status = "stopped"
-                        yield log_event(f"[{ts()}] Stopped by user")
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                        return
+                # Single LLM call with whole text — preserves cross-paragraph
+                # context (terminology, document domain). The model keeps the
+                # paragraph breaks naturally in its output.
+                translated = _translate_unit(
+                    normalized, req.lang_from, req.lang_to, stop_event,
+                )
+                if translated is None:
+                    final_status = "stopped"
+                    yield log_event(f"[{ts()}] Stopped by user")
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return
 
-                    if not para.strip():
-                        translated_parts.append(para)
-                        continue
-
-                    yield log_event(f"[{ts()}] Paragraph {i + 1}/{len(paragraphs)} — {len(para)} chars")
-                    translated = _translate_unit(
-                        para, req.lang_from, req.lang_to, stop_event,
-                    )
-                    if translated is None:
-                        final_status = "stopped"
-                        yield log_event(f"[{ts()}] Stopped by user")
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                        return
-
-                    translated_parts.append(translated)
-                    chunk_out = translated
-                    if i < len(paragraphs) - 1:
-                        chunk_out += "\n\n"
-                    yield f"data: {json.dumps({'type': 'token', 'text': chunk_out})}\n\n"
-
-                result = "\n\n".join(translated_parts)
                 final_status = "success"
-                yield log_event(f"[{ts()}] Done — {len(result)} chars")
-                yield f"data: {json.dumps({'type': 'result', 'text': result})}\n\n"
+                yield log_event(f"[{ts()}] Done — {len(translated)} chars")
+                yield f"data: {json.dumps({'type': 'token', 'text': translated})}\n\n"
+                yield f"data: {json.dumps({'type': 'result', 'text': translated})}\n\n"
 
             except req_lib.exceptions.Timeout:
                 final_error = "Timeout"
