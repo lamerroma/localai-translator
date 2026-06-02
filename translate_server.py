@@ -366,7 +366,12 @@ def _translate_unit(text: str, lang_from: str, lang_to: str,
                 "model": CFG["model"],
                 "prompt": prompt,
                 "stream": False,
-                "options": {"num_predict": CFG["max_tokens"]},
+                "options": {
+                    "num_predict": CFG["max_tokens"],
+                    "num_ctx": 8192,        # rinex20/translategemma3 trained ctx
+                    "temperature": 0.1,     # model card: deterministic translations
+                    "top_p": 0.9,           # model card: focused token sampling
+                },
             },
             timeout=CFG["llm_timeout"],
         )
