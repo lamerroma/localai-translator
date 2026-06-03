@@ -2325,8 +2325,11 @@ async def translate_file_endpoint(
                                 html_val = _mammoth.convert_to_html(io.BytesIO(data)).value
                                 _preview_cache[file_id] = html_val.encode("utf-8")
                                 yield f"data: {json.dumps({'type': 'preview', 'url': f'/preview/{file_id}'})}\n\n"
+                            except ImportError:
+                                yield f"data: {json.dumps({'type': 'log', 'text': 'Перегляд недоступний: встановіть mammoth (pip install mammoth)'})}\n\n"
                             except Exception as _e:
                                 log.warning(f"mammoth preview failed: {_e}")
+                                yield f"data: {json.dumps({'type': 'log', 'text': f'Помилка генерації перегляду: {_e}'})}\n\n"
                         yield f"data: {json.dumps({'type': 'done'})}\n\n"
                         return
             except req_lib.exceptions.Timeout:
