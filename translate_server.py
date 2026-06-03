@@ -26,7 +26,7 @@ log = logging.getLogger("translator")
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "translator_config.json")
 
 DEFAULTS = {
-    "base_url":        "http://192.168.88.59:11434/v1",
+    "base_url":        "http://127.0.0.1:11434/v1",
     "model":           "rinex20/translategemma3:12b",
     "max_tokens":      2048,
     "llm_timeout":     180,
