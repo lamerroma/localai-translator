@@ -1190,6 +1190,38 @@ USER_HTML = r"""<!DOCTYPE html>
   @keyframes pulse {
     0%, 100% { opacity: 1; } 50% { opacity: .4; }
   }
+  .btn-help {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 2px solid var(--border); background: var(--bg);
+    color: var(--muted); font-size: 0.95rem; font-weight: 700;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: border-color .15s, color .15s;
+  }
+  .btn-help:hover { border-color: var(--primary); color: var(--primary); }
+  .help-modal {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.45); z-index: 1000;
+    align-items: center; justify-content: center;
+  }
+  .help-modal.open { display: flex; }
+  .help-box {
+    background: var(--card); border-radius: 14px;
+    padding: 28px 32px; max-width: 540px; width: 90%;
+    box-shadow: 0 8px 32px rgba(0,0,0,.18);
+    position: relative; max-height: 80vh; overflow-y: auto;
+  }
+  .help-box h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 16px; }
+  .help-box p, .help-box li { font-size: 0.92rem; color: var(--muted); line-height: 1.6; }
+  .help-box ul { padding-left: 18px; margin: 8px 0; }
+  .help-box li { margin-bottom: 6px; }
+  .help-box .close-help {
+    position: absolute; top: 14px; right: 16px;
+    background: none; border: none; font-size: 1.3rem;
+    cursor: pointer; color: var(--muted);
+  }
+  .help-box .close-help:hover { color: var(--text); }
+  .help-section { margin-bottom: 18px; }
+  .help-section h3 { font-size: 0.85rem; font-weight: 600; color: var(--text); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
 </style>
 </head>
 <body>
@@ -1199,11 +1231,52 @@ USER_HTML = r"""<!DOCTYPE html>
       <h1>Interpres-API</h1>
       <p>Автономний переклад текстів та документів</p>
     </div>
-    <span class="online-badge" id="online-badge" title="Користувачів онлайн">
-      <span class="online-dot"></span>
-      <span id="online-count">—</span>
-    </span>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <button class="btn-help" onclick="document.getElementById('help-modal').classList.add('open')" title="Довідка">?</button>
+      <span class="online-badge" id="online-badge" title="Користувачів онлайн">
+        <span class="online-dot"></span>
+        <span id="online-count">—</span>
+      </span>
+    </div>
   </header>
+
+  <div id="help-modal" class="help-modal" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="help-box">
+      <button class="close-help" onclick="document.getElementById('help-modal').classList.remove('open')">&#x2715;</button>
+      <h2>Як користуватись Interpres-API</h2>
+      <div class="help-section">
+        <h3>Переклад тексту</h3>
+        <ul>
+          <li>Вставте або введіть текст у ліве поле.</li>
+          <li>Оберіть мову оригіналу та мову перекладу.</li>
+          <li>Натисніть <strong>Перекласти</strong> — результат з'явиться праворуч.</li>
+          <li>Кнопка <strong>Очистити</strong> скидає обидва поля.</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h3>Переклад файлів</h3>
+        <ul>
+          <li>Підтримуються формати: <strong>DOCX, PDF, TXT</strong>.</li>
+          <li>Перетягніть файл на зону завантаження або натисніть щоб обрати.</li>
+          <li>Після завершення з'явиться кнопка <strong>Завантажити</strong>.</li>
+          <li>Для DOCX також доступна кнопка <strong>Переглянути</strong> — перегляд у браузері та збереження як PDF.</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h3>Зупинка перекладу</h3>
+        <ul>
+          <li>Натисніть <strong>Зупинити</strong> під час обробки щоб перервати переклад.</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h3>Налаштування</h3>
+        <ul>
+          <li>Модель, температуру, режим вставки та інші параметри можна змінити в <strong>Адмін-панелі</strong>.</li>
+          <li>Адмін-панель доступна за адресою <code>/admin</code>.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 
   <div class="card">
     <div class="lang-bar">
