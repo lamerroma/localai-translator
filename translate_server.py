@@ -1183,6 +1183,7 @@ USER_HTML = r"""<!DOCTYPE html>
           <div class="actions">
             <button id="btn-translate" class="primary" onclick="doTranslate()">Перекласти</button>
             <button id="btn-stop" class="stop" onclick="doStop()">Зупинити</button>
+            <button class="secondary" style="display:inline-flex;" onclick="clearInput()">Очистити</button>
             <span class="spinner" id="text-spinner"></span>
             <span class="status" id="text-status"></span>
           </div>
@@ -1395,6 +1396,14 @@ function showResult(text, format) {
 document.getElementById('input').addEventListener('keydown', function(e) {
   if (e.ctrlKey && e.key === 'Enter') doTranslate();
 });
+
+function clearInput() {
+  const el = document.getElementById('input');
+  el.innerHTML = '';
+  el.focus();
+  const result = document.getElementById('result');
+  result.innerHTML = '<div class="result-placeholder">Переклад з\'явиться тут...</div>';
+}
 
 async function doStop() {
   if (_textController) { _textController.abort(); _textController = null; }
