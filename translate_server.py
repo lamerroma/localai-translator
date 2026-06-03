@@ -1076,6 +1076,15 @@ USER_HTML = r"""<!DOCTYPE html>
   .result-content { min-height: 320px; max-height: 70vh; }
   .result-content.streaming { color: var(--muted); font-style: italic; white-space: pre-wrap; }
   .result-placeholder { color: #aaa; font-size: 0.9rem; padding: 14px; }
+
+  .model-bar { display: flex; align-items: center; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+  .conn-status { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
+  .conn-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: #94a3b8; transition: background 0.3s; }
+  .conn-dot.ok { background: var(--success); }
+  .conn-dot.err { background: var(--danger); }
+  .model-select-wrap { flex: 1; min-width: 200px; }
+  .model-select-wrap label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 4px; }
+  .model-select-wrap select { width: 100%; }
 </style>
 </head>
 <body>
@@ -1095,6 +1104,16 @@ USER_HTML = r"""<!DOCTYPE html>
       <div>
         <label>На мову</label>
         <select id="lang_to"></select>
+      </div>
+    </div>
+    <div class="model-bar">
+      <div class="conn-status">
+        <span class="conn-dot" id="conn-dot"></span>
+        <span id="conn-text">Перевірка...</span>
+      </div>
+      <div class="model-select-wrap">
+        <label>Модель</label>
+        <select id="model_select" onchange="onModelChange()"></select>
       </div>
     </div>
   </div>
@@ -1148,7 +1167,7 @@ USER_HTML = r"""<!DOCTYPE html>
   <div class="footer">
     <a href="/admin">Адміністрування</a>
     <span style="margin: 0 12px; color: var(--border);">|</span>
-    <span>v1.1</span>
+    <span>v1.2</span>
   </div>
 </div>
 
@@ -1961,8 +1980,53 @@ async function initSelects() {
   to.value = 'Ukrainian';
 }
 
+// ── Models & connection status ─────────────────────────────────────────
+async function loadModels() {
+  const dot  = document.getElementById('conn-dot');
+  const txt  = document.getElementById('conn-text');
+  const sel  = document.getElementById('model_select');
+  try {
+    const r    = await fetch('/models');
+    const data = await r.json();
+    sel.innerHTML = '';
+    if (data.ok && data.models.length > 0) {
+      dot.className = 'conn-dot ok';
+      txt.textContent = 'Ollama підключена';
+      data.models.forEach(m => {
+        const opt = new Option(m, m);
+        if (m === data.current) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      if (!data.models.includes(data.current) && data.current) {
+        const opt = new Option(data.current + ' (не знайдено)', data.current);
+        opt.selected = true;
+        sel.insertBefore(opt, sel.firstChild);
+      }
+    } else {
+      dot.className = 'conn-dot err';
+      txt.textContent = 'Ollama недоступна';
+      if (data.current) sel.appendChild(new Option(data.current, data.current));
+    }
+  } catch (e) {
+    dot.className = 'conn-dot err';
+    txt.textContent = 'Помилка з\'єднання';
+  }
+}
+
+async function onModelChange() {
+  const model = document.getElementById('model_select').value;
+  await fetch('/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model })
+  });
+}
+
+setInterval(loadModels, 30000);
+
 // ── Init ──────────────────────────────────────────────────────────────
 initSelects();
+loadModels();
 loadSettings();
 </script>
 </body>
@@ -2004,6 +2068,19 @@ def admin_stats(limit: int = 100):
 def get_languages():
     langs = sorted(LANG_MAP.keys(), key=lambda k: LANG_NAMES_UK[k])
     return JSONResponse([{"label": LANG_NAMES_UK[k], "value": k} for k in langs])
+
+
+@app.get("/models")
+def get_models():
+    try:
+        resp = req_lib.get(f"{_ollama_native_host()}/api/tags", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            models = [m["name"] for m in data.get("models", [])]
+            return JSONResponse({"ok": True, "models": models, "current": CFG.get("model", "")})
+        return JSONResponse({"ok": False, "models": [], "current": CFG.get("model", ""), "error": f"HTTP {resp.status_code}"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "models": [], "current": CFG.get("model", ""), "error": str(e)})
 
 
 @app.get("/config")
