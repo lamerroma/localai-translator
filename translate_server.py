@@ -255,6 +255,7 @@ async def basic_auth(request: Request, call_next):
 
 _active: dict[str, threading.Event] = {}
 _results: dict[str, tuple[str, bytes]] = {}
+_preview_cache: dict[str, bytes] = {}   # file_id -> HTML bytes from mammoth
 
 _job_queue: _queue_mod.Queue = _queue_mod.Queue()
 _ticket_lock = threading.Lock()
@@ -1041,6 +1042,33 @@ USER_HTML = r"""<!DOCTYPE html>
   .download-link { background: var(--success); display: none; }
   .download-link:hover { background: var(--success-hover); }
   .download-link.visible { display: inline-flex; }
+  button.preview-btn { background: #7c3aed; display: none; }
+  button.preview-btn:hover { background: #6d28d9; }
+  button.preview-btn.visible { display: inline-flex; }
+
+  /* Preview modal */
+  #preview-modal {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,.55); flex-direction: column;
+  }
+  #preview-modal.open { display: flex; }
+  #preview-toolbar {
+    background: #1e293b; color: white; display: flex; align-items: center;
+    gap: 10px; padding: 8px 16px; flex-shrink: 0;
+  }
+  #preview-toolbar span { font-size: .9rem; flex: 1; opacity: .7; }
+  #preview-toolbar button {
+    padding: 6px 16px; font-size: .85rem; border-radius: 6px;
+    border: none; cursor: pointer; font-family: inherit;
+  }
+  #btn-preview-pdf { background: #2563eb; color: white; }
+  #btn-preview-pdf:hover { background: #1d4ed8; }
+  #btn-preview-close { background: #475569; color: white; }
+  #btn-preview-close:hover { background: #334155; }
+  #preview-iframe {
+    flex: 1; border: none; background: white;
+    margin: 12px; border-radius: 8px; overflow: hidden;
+  }
 
   .status { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 8px; }
   .status.error { color: var(--danger); }
@@ -1194,6 +1222,7 @@ USER_HTML = r"""<!DOCTYPE html>
         <button id="btn-file" class="primary" onclick="doTranslateFile()">Перекласти файл</button>
         <button id="btn-file-stop" class="stop" onclick="doFileStop()">Зупинити</button>
         <a id="download-link" class="download-link">↓ Завантажити</a>
+        <button id="btn-preview" class="preview-btn" onclick="openPreview()">&#128065; Переглянути</button>
         <button id="btn-file-retry" class="secondary" onclick="doTranslateFile()">↺ Перекласти знову</button>
         <span class="spinner" id="file-spinner"></span>
       </div>
@@ -1345,12 +1374,12 @@ async function doStop() {
   setWorking('text', false);
 }
 
-// ── File translation ──────────────────────────────────────────────────
 // ── File translation ──────────────────────────────────────────────────────
 let _fileController = null;
 let _fileRequestId = null;
 let _selectedFile = null;
 let _fileStartTime = null;
+let _previewUrl = null;
 
 function dzClick() {
   if (!_selectedFile) document.getElementById('file-input').click();
@@ -1378,7 +1407,9 @@ function clearFile(e) {
 }
 
 function fileResetResult() {
+  _previewUrl = null;
   document.getElementById('download-link').classList.remove('visible');
+  document.getElementById('btn-preview').classList.remove('visible');
   document.getElementById('btn-file-retry').classList.remove('visible');
   document.getElementById('file-task-id').classList.remove('visible');
   document.getElementById('file-log-box').classList.remove('visible');
@@ -1494,6 +1525,10 @@ async function doTranslateFile() {
           link.classList.add('visible');
           document.getElementById('btn-file-retry').classList.add('visible');
         }
+        else if (evt.type === 'preview') {
+          _previewUrl = evt.url;
+          document.getElementById('btn-preview').classList.add('visible');
+        }
         else if (evt.type === 'error') {
           fileLog('Помилка: ' + (evt.text || 'невідома'), 'log-error');
           setProgress(0, '');
@@ -1507,6 +1542,33 @@ async function doTranslateFile() {
   _fileController = null;
   _fileRequestId = null;
 }
+
+function openPreview() {
+  if (!_previewUrl) return;
+  const modal = document.getElementById('preview-modal');
+  const iframe = document.getElementById('preview-iframe');
+  modal.classList.add('open');
+  // Load via src so the browser handles it as a separate page
+  iframe.src = _previewUrl;
+}
+
+function closePreview() {
+  const modal = document.getElementById('preview-modal');
+  modal.classList.remove('open');
+  document.getElementById('preview-iframe').src = 'about:blank';
+}
+
+function savePdf() {
+  const iframe = document.getElementById('preview-iframe');
+  if (!iframe.contentWindow) return;
+  iframe.contentWindow.focus();
+  iframe.contentWindow.print();
+}
+
+// Close on backdrop click
+document.getElementById('preview-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('preview-modal')) closePreview();
+});
 
 async function doFileStop() {
   if (_fileController) { _fileController.abort(); _fileController = null; }
@@ -1569,6 +1631,16 @@ document.getElementById('input').addEventListener('keydown', e => {
   if (e.ctrlKey && e.key === 'Enter') doTranslate();
 });
 </script>
+
+<!-- Preview modal -->
+<div id="preview-modal">
+  <div id="preview-toolbar">
+    <span id="preview-title">Перегляд перекладу</span>
+    <button id="btn-preview-pdf" onclick="savePdf()">&#128438; Зберегти PDF</button>
+    <button id="btn-preview-close" onclick="closePreview()">&#10005; Закрити</button>
+  </div>
+  <iframe id="preview-iframe" sandbox="allow-same-origin allow-scripts"></iframe>
+</div>
 </body>
 </html>"""
 
@@ -2196,6 +2268,15 @@ async def translate_file_endpoint(
                         _results[file_id] = (out_filename, data, mime)
                         final_status = "success"
                         yield f"data: {json.dumps({'type': 'download', 'url': f'/download/{file_id}', 'filename': out_filename})}\n\n"
+                        # Generate HTML preview for DOCX files
+                        if ext == "docx":
+                            try:
+                                import mammoth as _mammoth
+                                html_val = _mammoth.convert_to_html(io.BytesIO(data)).value
+                                _preview_cache[file_id] = html_val.encode("utf-8")
+                                yield f"data: {json.dumps({'type': 'preview', 'url': f'/preview/{file_id}'})}\n\n"
+                            except Exception as _e:
+                                log.warning(f"mammoth preview failed: {_e}")
                         yield f"data: {json.dumps({'type': 'done'})}\n\n"
                         return
             except req_lib.exceptions.Timeout:
@@ -2242,6 +2323,25 @@ def download_file(file_id: str):
         media_type=mime,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
+
+
+@app.get("/preview/{file_id}")
+def preview_file(file_id: str):
+    html = _preview_cache.get(file_id)
+    if not html:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # Wrap in a minimal page with basic typography
+    wrapped = (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+        "<style>body{font-family:sans-serif;max-width:860px;margin:40px auto;"
+        "padding:0 24px;line-height:1.6;color:#222;}"
+        "table{border-collapse:collapse;width:100%}"
+        "td,th{border:1px solid #ccc;padding:6px 10px}"
+        "img{max-width:100%}</style></head><body>"
+        + html.decode("utf-8")
+        + "</body></html>"
+    )
+    return Response(content=wrapped, media_type="text/html; charset=utf-8")
 
 
 if __name__ == "__main__":
