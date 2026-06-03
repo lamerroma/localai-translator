@@ -384,16 +384,11 @@ def _translate_unit(text: str, lang_from: str, lang_to: str,
         return text
 
 
-def _translate_html_nodes(html: str, lang_from: str, lang_to: str,
-                          stop_event: threading.Event) -> str:
-    """Translate HTML content preserving all tags — only text nodes are translated.
-
-    Strategy: collect all text nodes, join with unique markers ⟦N⟧, send as
-    one batch to Ollama, then split by markers and put back into HTML structure.
-    """
+def _parse_html_to_parts(html: str):
+    """Parse HTML into (parts, text_indices, batch_text) for translation."""
     from html.parser import HTMLParser
 
-    parts = []  # list of ('tag'|'text'|'ws', str)
+    parts = []
 
     class _Parser(HTMLParser):
         def handle_starttag(self, tag, attrs):
@@ -411,30 +406,85 @@ def _translate_html_nodes(html: str, lang_from: str, lang_to: str,
             parts.append(('tag', f'&#{name};'))
 
     _Parser().feed(html)
-
     text_indices = [i for i, (t, _) in enumerate(parts) if t == 'text']
-    if not text_indices:
-        return html
-
-    # Build batch: ⟦0⟧first text⟦1⟧second text...
     batch = ''.join(f'⟦{i}⟧{parts[i][1]}' for i in text_indices)
+    return parts, text_indices, batch
 
-    translated = _translate_unit(batch, lang_from, lang_to, stop_event)
-    if not translated:
-        return html
 
-    # Extract translated pieces back using markers
+def _reconstruct_html(parts: list, text_indices: list, translated_batch: str) -> str:
+    """Put translated text nodes back into HTML structure using ⟦N⟧ markers."""
     for idx in text_indices:
         marker = f'⟦{idx}⟧'
-        start = translated.find(marker)
+        start = translated_batch.find(marker)
         if start == -1:
             continue
         start += len(marker)
-        next_marker = translated.find('⟦', start)
-        end = next_marker if next_marker != -1 else len(translated)
-        parts[idx] = ('text', translated[start:end])
-
+        next_marker = translated_batch.find('⟦', start)
+        end = next_marker if next_marker != -1 else len(translated_batch)
+        parts[idx] = ('text', translated_batch[start:end])
     return ''.join(content for _, content in parts)
+
+
+def _translate_html_nodes(html: str, lang_from: str, lang_to: str,
+                          stop_event: threading.Event) -> str:
+    """Translate HTML preserving all tags. Text nodes only, single Ollama call."""
+    parts, text_indices, batch = _parse_html_to_parts(html)
+    if not text_indices:
+        return html
+    translated = _translate_unit(batch, lang_from, lang_to, stop_event)
+    if not translated:
+        return html
+    return _reconstruct_html(parts, text_indices, translated)
+
+
+def _translate_unit_streaming(text: str, lang_from: str, lang_to: str,
+                              stop_event: threading.Event):
+    """Generator that yields tokens from Ollama stream one by one."""
+    if not text or len(text.strip()) < 2:
+        yield text
+        return
+    if stop_event.is_set():
+        return
+
+    target = lang_to if lang_to else "Ukrainian"
+    content = f"Translate to {target}:\n\n{text}"
+
+    try:
+        resp = req_lib.post(
+            f"{_ollama_native_host()}/api/chat",
+            json={
+                "model": CFG["model"],
+                "messages": [{"role": "user", "content": content}],
+                "stream": True,
+            },
+            timeout=CFG["llm_timeout"],
+            stream=True,
+        )
+        if resp.status_code != 200:
+            log.warning(f"Ollama stream returned {resp.status_code}")
+            yield text
+            return
+
+        for raw_line in resp.iter_lines():
+            if stop_event.is_set():
+                resp.close()
+                return
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            token = data.get("message", {}).get("content", "")
+            if token:
+                yield token
+
+    except req_lib.exceptions.Timeout:
+        raise
+    except Exception as e:
+        log.warning(f"_translate_unit_streaming failed: {e}")
+        yield text
 
 
 # ── DOCX translation helpers ─────────────────────────────────────────────────
@@ -1003,6 +1053,26 @@ USER_HTML = r"""<!DOCTYPE html>
   .footer { text-align: center; margin-top: 24px; font-size: 0.8rem; color: var(--muted); }
   .footer a { color: var(--muted); text-decoration: none; }
   .footer a:hover { color: var(--primary); }
+
+  /* Side-by-side text translation layout */
+  .split-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .split-layout { grid-template-columns: 1fr; }
+  }
+  .split-panel { display: flex; flex-direction: column; }
+  .panel-label {
+    font-size: 0.8rem; color: var(--muted); font-weight: 500;
+    margin-bottom: 8px; display: flex; align-items: center; gap: 8px; min-height: 22px;
+  }
+  .rich-editor { min-height: 320px; max-height: 520px; }
+  .result-content { min-height: 320px; max-height: 520px; }
+  .result-content.streaming { color: var(--muted); font-style: italic; white-space: pre-wrap; }
+  .result-placeholder { color: #aaa; font-size: 0.9rem; padding: 14px; }
 </style>
 </head>
 <body>
@@ -1033,13 +1103,24 @@ USER_HTML = r"""<!DOCTYPE html>
     </div>
 
     <div id="panel-text" class="panel active">
-      <div id="input" class="rich-editor" contenteditable="true" spellcheck="false"
-           data-gramm="false" data-placeholder="Введіть текст для перекладу..."></div>
-      <div class="actions">
-        <button id="btn-translate" class="primary" onclick="doTranslate()">Перекласти</button>
-        <button id="btn-stop" class="stop" onclick="doStop()">Зупинити</button>
-        <span class="spinner" id="text-spinner"></span>
-        <span class="status" id="text-status"></span>
+      <div class="split-layout">
+        <div class="split-panel">
+          <div class="panel-label">Оригінал</div>
+          <div id="input" class="rich-editor" contenteditable="true" spellcheck="false"
+               data-gramm="false" data-placeholder="Введіть текст для перекладу..."></div>
+          <div class="actions">
+            <button id="btn-translate" class="primary" onclick="doTranslate()">Перекласти</button>
+            <button id="btn-stop" class="stop" onclick="doStop()">Зупинити</button>
+            <span class="spinner" id="text-spinner"></span>
+            <span class="status" id="text-status"></span>
+          </div>
+        </div>
+        <div class="split-panel">
+          <div class="panel-label" id="result-label">Переклад</div>
+          <div id="result" class="result-content">
+            <div class="result-placeholder">Переклад з'явиться тут...</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1059,11 +1140,6 @@ USER_HTML = r"""<!DOCTYPE html>
         <span class="status" id="file-status"></span>
       </div>
     </div>
-  </div>
-
-  <div class="card" id="result-card" style="display:none">
-    <div class="result-label">Результат</div>
-    <div id="result" class="result-content"></div>
   </div>
 
   <div class="footer">
@@ -1131,7 +1207,7 @@ async function doTranslate() {
 
   setWorking('text', true);
   setStatus('text-status', 'Перекладаю...');
-  document.getElementById('result-card').style.display = 'none';
+  document.getElementById('result').innerHTML = '';
   _textTokens = '';
   _textController = new AbortController();
 
@@ -1161,8 +1237,15 @@ async function doTranslate() {
         if (evt.type === 'id') _textRequestId = evt.text;
         else if (evt.type === 'queue' && evt.ahead > 0) setStatus('text-status', `У черзі: попереду ${evt.ahead}`);
         else if (evt.type === 'queue' && evt.ahead === 0) setStatus('text-status', 'Перекладаю...');
-        else if (evt.type === 'token') _textTokens += evt.text;
+        else if (evt.type === 'token') {
+          // Stream tokens into result as plain text (fast visual feedback)
+          _textTokens += evt.text;
+          const resultEl = document.getElementById('result');
+          resultEl.classList.add('streaming');
+          resultEl.textContent = _textTokens;
+        }
         else if (evt.type === 'result') {
+          // Final result: replace with formatted HTML
           showResult(evt.text);
           setStatus('text-status', 'Готово', 'success');
         }
@@ -1179,9 +1262,10 @@ async function doTranslate() {
   _textRequestId = null;
 }
 
-function showResult(text) {
-  document.getElementById('result-card').style.display = 'block';
-  document.getElementById('result').innerHTML = text;
+function showResult(html) {
+  const resultEl = document.getElementById('result');
+  resultEl.classList.remove('streaming');
+  resultEl.innerHTML = html;
 }
 
 document.getElementById('input').addEventListener('keydown', function(e) {
@@ -2107,14 +2191,33 @@ def translate_html(req: TranslateHtmlRequest, request: Request):
             yield log_event(f"[{ts()}] HTML translation: {len(req.html)} bytes")
 
             try:
-                translated_html = _translate_html_nodes(
-                    req.html, req.lang_from, req.lang_to, stop_event
-                )
-                if translated_html is None:
-                    final_status = "stopped"
+                parts, text_indices, batch = _parse_html_to_parts(req.html)
+
+                if not text_indices:
+                    # No text nodes — return HTML as-is
+                    final_status = "success"
+                    yield f"data: {json.dumps({'type': 'result', 'text': req.html})}\n\n"
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return
 
+                # Stream tokens from Ollama — show progress in real time
+                translated_batch = ""
+                for token in _translate_unit_streaming(batch, req.lang_from, req.lang_to, stop_event):
+                    if stop_event.is_set():
+                        final_status = "stopped"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        return
+                    translated_batch += token
+                    yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+
+                if not translated_batch:
+                    final_status = "error"
+                    yield f"data: {json.dumps({'type': 'error', 'text': 'Ollama не повернув результат'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return
+
+                # Reconstruct HTML with translated text nodes
+                translated_html = _reconstruct_html(parts, text_indices, translated_batch)
                 final_status = "success"
                 yield log_event(f"[{ts()}] Done — {len(translated_html)} bytes")
                 yield f"data: {json.dumps({'type': 'result', 'text': translated_html})}\n\n"
