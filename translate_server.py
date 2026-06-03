@@ -493,156 +493,7 @@ def _translate_unit_streaming(text: str, lang_from: str, lang_to: str,
         yield text
 
 
-# ── DOCX translation helpers ─────────────────────────────────────────────────
-
-def _docx_significant_styles(run):
-    """Return frozenset of significant formatting tags on a run's rPr."""
-    try:
-        from docx.oxml.ns import qn
-    except ImportError:
-        return frozenset()
-    SIGNIFICANT = frozenset([
-        qn('w:u'), qn('w:strike'), qn('w:dstrike'),
-        qn('w:shd'), qn('w:highlight'), qn('w:bdr'),
-        qn('w:effectLst'), qn('w:em'),
-    ])
-    rPr = run.element.rPr
-    if rPr is None:
-        return frozenset()
-    return frozenset(child.tag for child in rPr if child.tag in SIGNIFICANT)
-
-
-def _docx_is_skippable(run):
-    """True for runs that should not be translated (image, tab, instrText, empty)."""
-    try:
-        from docx.oxml.ns import qn
-    except ImportError:
-        return False
-    xml = getattr(run.element, 'xml', '')
-    if '<w:drawing' in xml or '<w:pict' in xml:
-        return True
-    if run.text == '':
-        return True
-    if run.text.strip() == '' and ('<w:tab' in xml or '<w:ptab' in xml):
-        return True
-    if run.element.find(qn('w:instrText')) is not None:
-        return True
-    return False
-
-
-def _docx_collect_segments(para):
-    """
-    Return list of (runs_list, full_text) for each formatting-uniform segment
-    in the paragraph. Runs with the same significant styles are grouped together.
-    instrText / image / tab runs act as boundaries and are skipped.
-    """
-    try:
-        from docx.oxml.ns import qn
-        from docx.text.run import Run
-    except ImportError:
-        return []
-
-    segments = []
-    current_runs = []
-    current_styles = None
-
-    for child in para._p:
-        tag = child.tag
-        # Skip non-run elements (pPr, bookmarks, etc.)
-        if not tag.endswith('}r'):
-            if current_runs:
-                text = ''.join(r.text for r in current_runs)
-                if text.strip():
-                    segments.append((list(current_runs), text))
-                current_runs = []
-                current_styles = None
-            continue
-
-        run = Run(child, para)
-
-        if _docx_is_skippable(run):
-            if current_runs:
-                text = ''.join(r.text for r in current_runs)
-                if text.strip():
-                    segments.append((list(current_runs), text))
-                current_runs = []
-                current_styles = None
-            continue
-
-        styles = _docx_significant_styles(run)
-        if current_styles is None:
-            current_styles = styles
-        elif styles != current_styles:
-            text = ''.join(r.text for r in current_runs)
-            if text.strip():
-                segments.append((list(current_runs), text))
-            current_runs = []
-            current_styles = styles
-
-        current_runs.append(run)
-
-    if current_runs:
-        text = ''.join(r.text for r in current_runs)
-        if text.strip():
-            segments.append((list(current_runs), text))
-
-    return segments
-
-
-def _docx_apply_to_segment(runs, translated_text):
-    """Write translated_text into the first live run; clear the rest."""
-    first = None
-    for r in runs:
-        if r.element.getparent() is not None:
-            first = r
-            break
-    if first is None:
-        return
-    first.text = translated_text
-    for r in runs[1:]:
-        if r.element.getparent() is not None:
-            r.text = ''
-
-
-def _docx_collect_paragraphs(doc):
-    """
-    Yield all translatable Paragraph objects from body, tables,
-    headers/footers, and footnotes/endnotes.
-    """
-    from docx.text.paragraph import Paragraph
-    from docx.table import Table, _Cell
-    from docx.oxml.ns import qn
-
-    def _from_element(parent_elem, container):
-        for child in parent_elem:
-            tag = child.tag
-            if tag.endswith('}p'):
-                yield Paragraph(child, container)
-            elif tag.endswith('}tbl'):
-                tbl = Table(child, container)
-                for row in tbl.rows:
-                    for cell in row.cells:
-                        yield from _from_element(cell._element, cell)
-            elif tag.endswith('}sdt'):
-                sdt_content = child.find(qn('w:sdtContent'))
-                if sdt_content is not None:
-                    yield from _from_element(sdt_content, container)
-
-    # Body
-    yield from _from_element(doc.element.body, doc)
-
-    # Headers / footers
-    for section in doc.sections:
-        for hf in (section.header, section.first_page_header, section.even_page_header,
-                   section.footer, section.first_page_footer, section.even_page_footer):
-            if hf is not None:
-                yield from _from_element(hf._element, hf)
-
-    # Footnotes / endnotes
-    for attr in ('footnotes_part', 'endnotes_part'):
-        part = getattr(doc.part, attr, None)
-        if part is not None:
-            yield from _from_element(part.element, part)
+# ── DOCX translation — see docx_translate.py ─────────────────────────────────
 
 
 def _translate_json_segments(batch: dict, lang_to: str,
@@ -715,30 +566,23 @@ def _translate_json_segments(batch: dict, lang_to: str,
 def translate_docx_bytes(content, base_name, lang_from, lang_to, stop_event):
     """Generator. Yields ('log'|'progress'|'error'|'stopped'|'done', ...)."""
     try:
-        from docx import Document
-    except ImportError:
-        yield ("error", "Бібліотека python-docx не встановлена")
+        from docx_translate import translate_docx, _collect_all_segments
+        import docx as _docx_lib
+        import io as _io
+    except ImportError as e:
+        yield ("error", f"Не вдалось імпортувати модуль перекладу DOCX: {e}")
         return
 
+    # Quick pre-check: open doc to count segments for size validation
     try:
-        doc = Document(io.BytesIO(content))
+        doc_check = _docx_lib.Document(_io.BytesIO(content))
+        _, originals = _collect_all_segments(doc_check)
     except Exception as e:
         yield ("error", f"Не вдалось відкрити DOCX: {e}")
         return
 
-    # Collect ALL segments across the entire document with global IDs.
-    # all_segs: list of (str_id, runs_list, original_text)
-    all_segs = []
-    total_chars = 0
-    for para in _docx_collect_paragraphs(doc):
-        if not para.text.strip():
-            continue
-        for runs, text in _docx_collect_segments(para):
-            seg_id = str(len(all_segs) + 1)
-            all_segs.append((seg_id, runs, text))
-            total_chars += len(text)
-
-    total_segs = len(all_segs)
+    total_chars = sum(len(t) for t in originals)
+    total_segs = len(originals)
     yield ("log", f"DOCX: {total_segs} сегментів, {total_chars} символів")
 
     if total_segs == 0:
@@ -757,52 +601,42 @@ def translate_docx_bytes(content, base_name, lang_from, lang_to, stop_event):
     target_lang = lang_to if lang_to else "Ukrainian"
     chunk_size = CFG.get("chunk_size", 3000)
 
-    # Split segments into batches by chunk_size characters.
-    batches = []
-    current_batch = {}
-    current_chars = 0
-    for seg_id, runs, text in all_segs:
-        if current_chars + len(text) > chunk_size and current_batch:
-            batches.append(current_batch)
-            current_batch = {}
-            current_chars = 0
-        current_batch[seg_id] = text
-        current_chars += len(text)
-    if current_batch:
-        batches.append(current_batch)
+    # Count batches for progress reporting
+    n_batches = max(1, -(-total_chars // chunk_size))  # ceil division
+    yield ("log", f"DOCX: ~{n_batches} батчів для перекладу")
 
-    yield ("log", f"DOCX: {len(batches)} батчів для перекладу")
+    # Wrap _translate_json_segments with progress reporting via a counter
+    batch_counter = [0]
 
-    # Build a lookup for fast run access
-    seg_runs = {seg_id: runs for seg_id, runs, _ in all_segs}
+    def translate_batch_with_progress(batch, lang, stop_ev):
+        result = _translate_json_segments(batch, lang, stop_ev)
+        batch_counter[0] += 1
+        return result
 
-    translated_count = 0
-    for batch_idx, batch in enumerate(batches, 1):
+    try:
+        translated_bytes = translate_docx(
+            content,
+            target_lang,
+            translate_batch_with_progress,
+            stop_event,
+            chunk_size=chunk_size,
+        )
+    except Exception as e:
         if stop_event.is_set():
             yield ("stopped",)
-            return
+        else:
+            yield ("error", f"Помилка перекладу DOCX: {e}")
+        return
 
-        translations = _translate_json_segments(batch, target_lang, stop_event)
+    if stop_event.is_set():
+        yield ("stopped",)
+        return
 
-        if stop_event.is_set():
-            yield ("stopped",)
-            return
-
-        for seg_id, translated_text in translations.items():
-            runs = seg_runs.get(seg_id)
-            if runs:
-                _docx_apply_to_segment(runs, translated_text)
-        translated_count += len(batch)
-
-        pct = round(translated_count / total_segs * 100)
-        yield ("progress", f"Батч {batch_idx}/{len(batches)}", pct)
-
-    out = io.BytesIO()
-    doc.save(out)
+    yield ("progress", f"Завершено", 100)
     yield ("done",
            f"{base_name}_translated.docx",
            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-           out.getvalue())
+           translated_bytes)
 
 
 def translate_pdf_bytes(content, base_name, lang_from, lang_to, stop_event):
