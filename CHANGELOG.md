@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.7 (2026-06-03)
+- Нові налаштування перекладу (адмін-панель + `translator_config.json`):
+  - `temperature` (0–2, за замовч. 0.7) — точність/творчість відповіді моделі
+  - `retry` (1–6, за замовч. 2) — кількість повторів при невдалому батчі
+  - `insert_mode` (replace/append/prepend) — режим вставки перекладу в DOCX
+  - `separator` — роздільник між оригіналом і перекладом (append/prepend)
+  - `custom_prompt` — кастомна інструкція, що додається перед стандартним промптом
+- `docx_translate.py`: `translate_docx` та `_apply_translation` підтримують `insert_mode` + `separator`
+- Admin UI: роздільник автоматично ховається в режимі replace
+
 ## v1.5 (2026-06-03)
 - Новий модуль `docx_translate.py` — повний порт XML-логіки DocuTranslate
   - Рекурсивна обробка гіперпосилань, smartTag, sdtContent (раніше текст губився)
