@@ -211,6 +211,12 @@ def get_stats_summary():
     return dict(row) if row else {}
 
 
+def clear_stats():
+    with _stats_lock, _stats_conn() as conn:
+        conn.execute("DELETE FROM stats")
+        conn.commit()
+
+
 init_stats_db()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1167,7 +1173,7 @@ USER_HTML = r"""<!DOCTYPE html>
   <div class="footer">
     <a href="/admin">Адміністрування</a>
     <span style="margin: 0 12px; color: var(--border);">|</span>
-    <span>v1.2</span>
+    <span>v1.3</span>
   </div>
 </div>
 
@@ -1514,6 +1520,7 @@ ADMIN_HTML = r"""<!DOCTYPE html>
       </div>
       <div class="btn-row" style="margin-top:10px;">
         <button onclick="loadStats()" style="background:#6b7280;">&#8635; Оновити</button>
+        <button onclick="clearStats()" style="background:#dc2626;">&#128465; Очистити статистику</button>
       </div>
     </div>
   </details>
@@ -1644,6 +1651,12 @@ async function loadStats() {
   }
 }
 
+async function clearStats() {
+  if (!confirm('Видалити всю статистику?')) return;
+  await fetch('/admin/stats/clear', { method: 'POST' });
+  loadStats();
+}
+
 document.getElementById('stats-details').addEventListener('toggle', e => {
   if (e.target.open) loadStats();
 });
@@ -1682,6 +1695,12 @@ def admin_stats(limit: int = 100):
         "summary": get_stats_summary(),
         "recent": get_recent_stats(limit),
     })
+
+
+@app.post("/admin/stats/clear")
+def admin_stats_clear():
+    clear_stats()
+    return JSONResponse({"ok": True})
 
 
 
