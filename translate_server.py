@@ -1135,7 +1135,7 @@ USER_HTML = r"""<!DOCTYPE html>
   <header>
     <div>
       <h1>Interpres-API</h1>
-      <p>Локальний переклад документів і тексту</p>
+      <p>Автономний переклад текстів та документів</p>
     </div>
     <span class="online-badge" id="online-badge" title="Користувачів онлайн">
       <span class="online-dot"></span>
