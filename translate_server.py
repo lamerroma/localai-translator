@@ -1147,6 +1147,8 @@ USER_HTML = r"""<!DOCTYPE html>
 
   <div class="footer">
     <a href="/admin">Адміністрування</a>
+    <span style="margin: 0 12px; color: var(--border);">|</span>
+    <span>v1.0</span>
   </div>
 </div>
 
