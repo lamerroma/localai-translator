@@ -1914,7 +1914,7 @@ ADMIN_HTML = r"""<!DOCTYPE html>
 <title>Interpres-API — Адмін</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: sans-serif; background: #f5f5f5; padding: 24px; max-width: 900px; margin: 0 auto; }
+  body { font-family: sans-serif; background: #f5f5f5; padding: 24px; max-width: 1200px; margin: 0 auto; }
   h1 { margin-bottom: 20px; font-size: 1.4rem; color: #333; }
   .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 16px; }
   label { display: block; font-size: .85rem; color: #555; margin-bottom: 4px; }
@@ -1947,7 +1947,7 @@ ADMIN_HTML = r"""<!DOCTYPE html>
   <details id="stats-details">
     <summary>&#128202; Статистика</summary>
     <div style="margin-top:16px;">
-      <div id="stats-summary" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:10px; margin-bottom:14px;"></div>
+      <div id="stats-summary" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:10px; margin-bottom:14px;"></div>
       <div style="overflow:auto; max-height:420px; border:1px solid #e2e8f0; border-radius:6px;">
         <table style="width:100%; border-collapse:collapse; font-size:.82rem;">
           <thead>
